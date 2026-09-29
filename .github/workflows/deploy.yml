@@ -42,7 +42,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
-      - run: npm run test:e2e
+      - name: Run browser smoke tests
+        run: xvfb-run -a npm run test:e2e
+        env:
+          PLAYWRIGHT_FIREFOX_HEADED: '1'
 
   deploy:
     if: github.event_name != 'pull_request'
