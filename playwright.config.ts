@@ -4,7 +4,8 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 2 : 0,
+  retries: 0,
+  workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
     baseURL: 'http://127.0.0.1:4173/Solar-System-Orbital-Journey/',
@@ -12,18 +13,7 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    {
-      name: 'firefox',
-      use: {
-        ...devices['Desktop Firefox'],
-        launchOptions: {
-          firefoxUserPrefs: {
-            'webgl.disabled': false,
-            'webgl.force-enabled': true,
-          },
-        },
-      },
-    },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
   webServer: {
