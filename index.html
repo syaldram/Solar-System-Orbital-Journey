@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="An interactive journey showing how the planets orbit a Sun that is itself moving through the Milky Way."
+    />
+    <meta name="theme-color" content="#04070f" />
+    <title>Solar System: Orbital Journey</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#timeline-controls">Skip to simulation controls</a>
+    <main id="app" class="app" data-entered="false">
+      <div class="scene" aria-label="Interactive three-dimensional Solar System visualization">
+        <canvas id="space-canvas" tabindex="0"></canvas>
+        <div id="label-layer" class="label-layer" aria-hidden="false"></div>
+        <div class="scene-vignette" aria-hidden="true"></div>
+      </div>
+
+      <section id="hero" class="hero" aria-labelledby="hero-title">
+        <div class="hero__rule" aria-hidden="true"></div>
+        <p class="eyebrow">An interactive astronomical journey</p>
+        <h1 id="hero-title">Solar System:<br /><span>Orbital Journey</span></h1>
+        <p class="hero__lede">See how our planetary system moves through the Milky Way.</p>
+        <p class="hero__detail">
+          Follow eight planets for 165 years, then change your point of view to discover that the Sun is moving too.
+        </p>
+        <div class="hero__actions">
+          <button id="begin-journey" class="button button--primary" type="button">
+            <span>Begin Journey</span><span aria-hidden="true">→</span>
+          </button>
+          <button id="explore-freely" class="button button--ghost" type="button">Explore Freely</button>
+        </div>
+        <div class="hero__facts" aria-label="Experience highlights">
+          <span><strong>8</strong> planets</span>
+          <span><strong>165</strong> Earth years</span>
+          <span><strong>3</strong> perspectives</span>
+        </div>
+        <p class="hero__note">Motion calculated from JPL approximate orbital elements</p>
+      </section>
+
+      <div id="app-chrome" class="app-chrome" aria-hidden="true">
+        <header class="topbar">
+          <button id="brand-home" class="brand" type="button" aria-label="Return to opening screen">
+            <span class="brand__orbit" aria-hidden="true"><i></i></span>
+            <span><strong>Orbital Journey</strong><small>Solar System / Milky Way</small></span>
+          </button>
+
+          <nav class="view-switcher" aria-label="Perspective">
+            <button type="button" data-frame="sun" aria-pressed="true">Travel with Sun</button>
+            <button type="button" data-frame="space" aria-pressed="false">Watch from Space</button>
+            <button type="button" data-frame="galaxy" aria-pressed="false">Galaxy Overview</button>
+          </nav>
+
+          <div class="topbar__actions">
+            <button id="explain-button" class="icon-button icon-button--text" type="button">Explain this view</button>
+            <button id="options-button" class="icon-button" type="button" aria-label="View options" aria-expanded="false">⋯</button>
+          </div>
+        </header>
+
+        <div id="scene-status" class="scene-status" aria-live="polite">
+          <span class="scene-status__dot" aria-hidden="true"></span>
+          <div><strong>Travel with Sun</strong><small>Planet sizes enhanced · orbital distances proportional</small></div>
+        </div>
+
+        <aside id="tour-panel" class="tour-panel" hidden aria-labelledby="tour-title">
+          <div class="tour-panel__progress"><span id="tour-progress"></span></div>
+          <p id="tour-kicker" class="eyebrow">Chapter 1 of 5</p>
+          <h2 id="tour-title">Meet the Solar System</h2>
+          <p id="tour-copy"></p>
+          <div class="tour-panel__actions">
+            <button id="tour-next" class="button button--primary button--small" type="button">Continue</button>
+            <button id="tour-skip" class="text-button" type="button">Skip journey</button>
+          </div>
+        </aside>
+
+        <aside id="planet-card" class="planet-card" hidden aria-labelledby="planet-name">
+          <button id="close-planet" class="panel-close" type="button" aria-label="Close planet information">×</button>
+          <p id="planet-type" class="eyebrow">Selected planet</p>
+          <h2 id="planet-name"></h2>
+          <p id="planet-identity" class="planet-card__identity"></p>
+          <dl class="planet-card__metrics">
+            <div><dt>Distance now</dt><dd id="planet-distance"></dd></div>
+            <div><dt>Orbital speed</dt><dd id="planet-speed"></dd></div>
+            <div><dt>Orbital period</dt><dd id="planet-period"></dd></div>
+          </dl>
+          <details>
+            <summary>Learn more</summary>
+            <dl class="planet-card__details">
+              <div><dt>Mean radius</dt><dd id="planet-radius"></dd></div>
+              <div><dt>Eccentricity</dt><dd id="planet-eccentricity">Varies slightly with epoch</dd></div>
+              <div><dt>Axial tilt</dt><dd id="planet-tilt"></dd></div>
+            </dl>
+            <p class="fine-print">Planet sizes are enhanced for visibility. Orbital distances remain proportional.</p>
+          </details>
+          <div class="planet-card__actions">
+            <button id="focus-planet" class="button button--secondary button--small" type="button">Focus Camera</button>
+            <button id="follow-planet" class="text-button" type="button">Follow Planet</button>
+          </div>
+        </aside>
+
+        <aside id="explain-panel" class="side-panel" hidden aria-labelledby="explain-title">
+          <button class="panel-close" data-close-panel="explain-panel" type="button" aria-label="Close explanation">×</button>
+          <p class="eyebrow">Reading the model</p>
+          <h2 id="explain-title">Travel with Sun</h2>
+          <div id="explain-copy"></div>
+          <button id="sources-open" class="text-button" type="button">Sources &amp; Credits</button>
+        </aside>
+
+        <aside id="options-panel" class="options-panel" hidden aria-labelledby="options-title">
+          <div class="panel-heading">
+            <div><p class="eyebrow">Display</p><h2 id="options-title">View options</h2></div>
+            <button class="panel-close" data-close-panel="options-panel" type="button" aria-label="Close options">×</button>
+          </div>
+          <label class="toggle"><span>Orbit paths</span><input type="checkbox" data-view-option="orbitPaths" checked /><i></i></label>
+          <label class="toggle"><span>Labels</span><input type="checkbox" data-view-option="labels" checked /><i></i></label>
+          <label class="toggle"><span>Motion trails</span><input type="checkbox" data-view-option="trails" /><i></i></label>
+          <label class="toggle"><span>Orbital-plane overlays</span><input type="checkbox" data-view-option="planeOverlays" /><i></i></label>
+          <hr />
+          <label class="toggle"><span>Reduce motion</span><input id="reduced-motion" type="checkbox" /><i></i></label>
+          <label class="select-row">Visual quality
+            <select id="quality-select">
+              <option value="auto">Auto</option><option value="high">High</option><option value="balanced">Balanced</option><option value="low">Low</option>
+            </select>
+          </label>
+        </aside>
+
+        <nav class="camera-bookmarks" aria-label="Camera bookmarks">
+          <button type="button" data-bookmark="inner">Inner Planets</button>
+          <button type="button" data-bookmark="outer">Outer Planets</button>
+          <button type="button" data-bookmark="path">Along the Path</button>
+          <button type="button" data-bookmark="ecliptic">Above the Ecliptic</button>
+          <button type="button" data-bookmark="full">Show Full Journey</button>
+        </nav>
+
+        <section id="timeline-controls" class="timeline" aria-label="Simulation timeline">
+          <button id="play-toggle" class="play-button" type="button" aria-label="Play simulation" aria-pressed="false"><span aria-hidden="true">▶</span></button>
+          <div class="timeline__date"><small>Simulated date · UTC</small><strong id="current-date"></strong></div>
+          <div class="timeline__scrubber">
+            <label class="sr-only" for="timeline-range">Simulated date across 165 years</label>
+            <input id="timeline-range" type="range" min="0" max="10000" value="0" />
+            <div><span>Today</span><span>+165 years</span></div>
+          </div>
+          <div class="speed-control">
+            <label for="speed-select">Speed</label>
+            <select id="speed-select">
+              <option value="day">1 day/s</option>
+              <option value="month" selected>1 month/s</option>
+              <option value="year">1 year/s</option>
+              <option value="decade">10 years/s</option>
+            </select>
+          </div>
+          <button id="today-button" class="text-button timeline__today" type="button">Return to Today</button>
+          <button id="share-button" class="icon-button icon-button--text" type="button">Share this view</button>
+        </section>
+
+        <section id="journey-complete" class="completion" hidden aria-labelledby="completion-title">
+          <p class="eyebrow">165 Earth years later</p>
+          <h2 id="completion-title">Journey complete</h2>
+          <p>Neptune has completed one orbit. The Solar System has traveled about 0.12 light-years along its local galactic path.</p>
+          <div class="completion__actions">
+            <button id="replay-button" class="button button--primary" type="button">Replay from Today</button>
+            <button id="continue-button" class="button button--ghost" type="button">Continue Exploring</button>
+          </div>
+        </section>
+      </div>
+
+      <dialog id="sources-dialog" class="sources-dialog">
+        <form method="dialog"><button class="panel-close" aria-label="Close sources">×</button></form>
+        <p class="eyebrow">Methods and attribution</p>
+        <h2>Sources &amp; Credits</h2>
+        <section>
+          <h3>Motion model</h3>
+          <p>Planet positions use NASA/JPL Table 2a and 2b approximate orbital elements, valid from 3000 BC to AD 3000. Earth is represented by the Earth–Moon barycenter. This is an educational approximation, not navigation-grade ephemeris data.</p>
+          <a href="https://ssd.jpl.nasa.gov/planets/approx_pos.html" target="_blank" rel="noreferrer">JPL Approximate Positions of the Planets</a>
+        </section>
+        <section>
+          <h3>Physical data</h3>
+          <p>Mean radii, rotation periods, orbital periods, and axial tilts come from JPL and NASA/NSSDC technical tables. Giant-planet textures rotate at an adopted reference period; their atmospheres rotate differentially.</p>
+          <a href="https://ssd.jpl.nasa.gov/planets/phys_par.html" target="_blank" rel="noreferrer">JPL Planetary Physical Parameters</a>
+        </section>
+        <section>
+          <h3>Images</h3>
+          <p>Planet maps are adapted from NASA 3D Resources and the USGS MESSENGER global Mercury mosaic. Uranus is rendered procedurally from its observed blue-green color. Saturn and Neptune appearance maps are representative.</p>
+          <a href="https://science.nasa.gov/3d-resources/" target="_blank" rel="noreferrer">NASA 3D Resources</a>
+          <a href="https://astrogeology.usgs.gov/search/map/mercury_messenger_mdis_global_mosaic_250m" target="_blank" rel="noreferrer">USGS Mercury mosaic</a>
+        </section>
+        <p class="fine-print">NASA and USGS are acknowledged as source organizations. Their use does not imply endorsement. Sources retrieved September 29, 2026.</p>
+      </dialog>
+
+      <section id="webgl-fallback" class="fallback" hidden aria-labelledby="fallback-title">
+        <p class="eyebrow">Interactive view unavailable</p>
+        <h1 id="fallback-title">Your browser could not start WebGL.</h1>
+        <p>The central lesson remains: planets orbit the Sun locally while the entire Solar System travels around the Milky Way. Try a current version of Chrome, Edge, Firefox, or Safari with hardware acceleration enabled.</p>
+        <button id="fallback-sources" class="button button--secondary" type="button">Sources &amp; Credits</button>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+      <div id="sr-status" class="sr-only" role="status" aria-live="polite"></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
