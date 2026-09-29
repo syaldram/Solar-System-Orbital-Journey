@@ -114,11 +114,18 @@ const appInterface = new AppInterface({
     }
   },
   onShare: () => void shareCurrentView(),
-  onFocus: (body) => scene?.focus(body),
+  onFocus: (body) => {
+    if (state.frame === 'galaxy' || state.cameraBookmark === 'full') {
+      dispatch({ type: 'set-frame', frame: 'space' });
+      dispatch({ type: 'set-bookmark', bookmark: 'path' });
+    }
+    scene?.focus(body);
+  },
   onFollow: (body) => {
     scene?.follow(body);
     appInterface.showToast(`Camera is now following ${body === 'sun' ? 'the Sun' : getPlanetProfile(body).name}.`);
   },
+  onResetCamera: () => scene?.resetCamera(),
   onReturnHome: () => scene?.follow(null),
 });
 
@@ -234,6 +241,7 @@ function animate(now: number): void {
         snapshot,
         frame: state.frame,
         bookmark: state.cameraBookmark,
+        cameraRevision: state.cameraRevision,
         selectedBody: state.selectedBody,
         viewOptions: state.viewOptions,
         quality: state.quality,

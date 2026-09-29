@@ -4,9 +4,9 @@ An interactive Three.js experience showing how the planets orbit a Sun that is i
 
 The application combines an educational motion model with a cinematic planetarium presentation. Visitors can follow a five-chapter guided journey or explore three linked perspectives:
 
-- **Travel with Sun** — a familiar Sun-centered view with proportional orbital distances.
-- **Watch from Space** — a rolling local galactic frame that reveals the Sun’s straight tangent journey.
-- **Galaxy Overview** — a schematic Milky Way orientation view.
+- **Travel with Sun** — a familiar Sun-centered view with proportional orbital distances and physical body-to-body radius ratios.
+- **Watch from Space** — a local Sun-following frame plus a Full Journey bookmark that shows the moving solar system along its straight galactic tangent path.
+- **Galaxy Overview** — an oblique, interactive Milky Way orientation view with a procedural stellar disk, central bar, dust lanes, and sparse foreground stars.
 
 ## Run locally
 
@@ -44,7 +44,7 @@ The code is organized around four modules with explicit interfaces:
 - `src/experience` owns deterministic timeline, tour, selection, view, and preference state.
 - `src/interface` owns semantic DOM controls, accessible panels, and validated share URLs.
 
-The astronomy module uses NASA/JPL Table 2a and 2b approximate orbital elements, valid from 3000 BC through AD 3000. The 165-year journey therefore stays within the published fit interval. These are educational approximations, not navigation-grade ephemerides; Earth is represented by the Earth–Moon barycenter.
+The astronomy module uses NASA/JPL Table 2a and 2b approximate orbital elements, valid from 3000 BC through AD 3000. The 165-year journey therefore stays within the published fit interval. These are educational approximations, not navigation-grade ephemerides; Earth is represented by the Earth–Moon barycenter. Body radii share one visual enhancement factor so planet-to-planet and planet-to-Sun proportions remain truthful, while markers keep bodies usable when their globes are too small to see.
 
 See the [product requirements](docs/PRD.md), [scientific model](docs/SCIENCE.md), and [asset credits](ASSET_CREDITS.md) for the agreed scope, assumptions, and sources.
 

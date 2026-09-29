@@ -4,9 +4,14 @@ import {
   calculateHeliocentricPosition,
   calculateOrbitalSpeedKmPerSecond,
   calculateOrbitPath,
+  calculatePerihelionDistanceAu,
 } from './solar-system';
 
 describe('calculateHeliocentricPosition', () => {
+  it('derives Mercury perihelion from the sourced orbital elements', () => {
+    expect(calculatePerihelionDistanceAu('mercury', new Date('2000-01-01T12:00:00.000Z'))).toBeCloseTo(0.3075, 4);
+  });
+
   it('tracks the independent JPL Horizons Earth barycenter vector at J2000', () => {
     const position = calculateHeliocentricPosition('earth', new Date('2000-01-01T12:00:00.000Z'));
 

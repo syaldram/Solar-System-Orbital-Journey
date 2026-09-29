@@ -63,5 +63,56 @@ test('opens every reference frame and named camera bookmark', async ({ page }) =
   await page.getByRole('button', { name: 'Galaxy Overview' }).click();
   await expect(page.getByText('Schematic · not a star-by-star map')).toBeVisible();
   await page.getByRole('button', { name: 'Travel with Sun' }).click();
-  await expect(page.getByText('Planet sizes enhanced · orbital distances proportional')).toBeVisible();
+  await expect(page.getByText('Body ratios preserved · orbital distances proportional')).toBeVisible();
+});
+
+test('keeps the calculated planets accessible in the full journey overview', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Explore Freely' }).click();
+  await page.getByRole('button', { name: 'Show Full Journey' }).click();
+
+  await expect(page.getByText('Solar System', { exact: true })).toBeVisible();
+  const sunMarker = page.getByRole('button', { name: 'Select Sun' });
+  const saturnMarker = page.getByRole('button', { name: 'Select Saturn' });
+  await expect(saturnMarker).toBeVisible();
+
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Labels').uncheck();
+  await expect(sunMarker).toHaveAttribute('data-label-mode', 'persistent');
+  await expect(saturnMarker).toHaveAttribute('data-label-mode', 'hidden');
+  await page.getByRole('button', { name: 'Close options' }).click();
+
+  await saturnMarker.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Saturn' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Focus Camera' }).click();
+  await expect(page.getByRole('button', { name: 'Along the Path' })).toHaveAttribute('aria-current', 'true');
+});
+
+test('offers a camera reset in every view', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Explore Freely' }).click();
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+  await page.getByRole('button', { name: 'View options' }).click();
+  await expect(page.getByRole('button', { name: 'Reset View' })).toBeVisible();
+  await page.getByRole('button', { name: 'Reset View' }).click();
+});
+
+test('keeps the Sun anchored while Along the Path advances', async ({ page }) => {
+  await page.goto('./?view=space&camera=path');
+  await page.getByLabel('Speed').selectOption('year');
+  await page.waitForTimeout(900);
+
+  const sunMarker = page.getByRole('button', { name: 'Select Sun' });
+  const before = await sunMarker.boundingBox();
+  await page.getByRole('button', { name: 'Play simulation' }).click();
+  await page.waitForTimeout(550);
+  await page.getByRole('button', { name: 'Pause simulation' }).click();
+  const after = await sunMarker.boundingBox();
+
+  expect(before).not.toBeNull();
+  expect(after).not.toBeNull();
+  expect(Math.abs((after?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(1);
+  expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(1);
 });

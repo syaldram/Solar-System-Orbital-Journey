@@ -57,6 +57,12 @@ const NSSDC_FACT_SHEET: ScientificSource = {
   retrievedAt: '2026-09-29',
 };
 
+const NASA_SUN_FACTS: ScientificSource = {
+  organization: 'NASA Science',
+  url: 'https://science.nasa.gov/sun/facts/',
+  retrievedAt: '2026-09-29',
+};
+
 function nasaPlanetSource(slug: PlanetId): ScientificSource {
   return {
     organization: 'NASA Science',
@@ -68,6 +74,8 @@ function nasaPlanetSource(slug: PlanetId): ScientificSource {
 function measurement(value: number, unit: MeasurementUnit, source: ScientificSource): SourcedMeasurement {
   return { value, unit, source };
 }
+
+export const SUN_MEAN_RADIUS = measurement(695_700, 'km', NASA_SUN_FACTS);
 
 export const PLANET_IDS: readonly PlanetId[] = [
   'mercury',

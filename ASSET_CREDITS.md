@@ -12,6 +12,11 @@ Retrieved September 29, 2026. All files are bundled locally; the application mak
 | `public/assets/textures/saturn.jpg` | [NASA 3D Resources — Saturn](https://science.nasa.gov/3d-resources/saturn/) | Representative/fictional appearance texture, not a complete observational map. |
 | `public/assets/textures/neptune.jpg` | [NASA 3D Resources — Neptune](https://science.nasa.gov/3d-resources/neptune/) | Representative/fictional appearance texture by Don Davis, not a complete observational map. |
 | Uranus procedural texture | [NASA/JPL-Caltech Voyager 2 true-color reference](https://science.nasa.gov/image-detail/pia00032/) | A locally generated blue-green texture calibrated to the observed appearance; not a surface map. |
+| Earth procedural cloud veil | [NASA Earth Observatory — The Blue Marble](https://science.nasa.gov/earth/earth-observatory/the-blue-marble-2181/) | A locally generated, co-rotating visual layer inspired by global cloud composites; not observed or live weather data. |
+| Sun procedural surface and glow | [NASA/Marshall Solar Physics — Granules](https://solarscience.msfc.nasa.gov/feature1.shtml) | A locally generated granulation-like visual treatment; not a solar observation or real-time activity map. |
+| Saturn procedural rings | [NASA/JPL-Caltech/Space Science Institute — Saturn's Rings](https://science.nasa.gov/resource/saturns-rings/) | Locally generated translucent bands, including a representative major gap; not a particle-resolved ring map. |
+| Uranus procedural rings | [NASA/JPL — Uranus Rings](https://science.nasa.gov/photojournal/uranus-rings/) | Locally generated narrow, dark bands inspired by Voyager 2 imagery; not an exact ring inventory or brightness model. |
+| Procedural Milky Way overview | [NASA/JPL-Caltech — Our Milky Way Gets a Makeover](https://science.nasa.gov/photojournal/our-milky-way-gets-a-makeover-artist-concept/) | Locally generated orientation artwork with a central bar, diffuse disk, dust lanes, and spiral structure; explicitly schematic and not a star catalog. |
 
 NASA media and the NASA 3D texture collection are generally not subject to U.S. copyright, subject to [NASA’s media usage guidelines](https://www.nasa.gov/nasa-brand-center/images-and-media/). NASA identifiers and logos are protected and are not included here. Third-party rights can vary by item.
 

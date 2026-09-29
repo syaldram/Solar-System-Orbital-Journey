@@ -55,4 +55,13 @@ describe('experience state', () => {
     expect(state.speed).toBe('year');
     expect(state.isPlaying).toBe(true);
   });
+
+  it('reapplies a camera bookmark when the same bookmark is selected again', () => {
+    const initial = createInitialExperienceState(TODAY);
+    const first = updateExperience(initial, { type: 'set-bookmark', bookmark: 'path' });
+    const repeated = updateExperience(first, { type: 'set-bookmark', bookmark: 'path' });
+
+    expect(repeated.cameraBookmark).toBe('path');
+    expect(repeated.cameraRevision).toBe(first.cameraRevision + 1);
+  });
 });

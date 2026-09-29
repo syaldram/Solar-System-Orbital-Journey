@@ -216,6 +216,17 @@ export function calculateHeliocentricPosition(planet: PlanetId, instant: Date): 
   };
 }
 
+export function calculatePerihelionDistanceAu(planet: PlanetId, instant: Date): number {
+  if (Number.isNaN(instant.getTime())) throw new RangeError('A valid UTC instant is required.');
+
+  const elements = ORBITAL_ELEMENTS[planet];
+  const julianDate = instant.getTime() / MILLISECONDS_PER_DAY + JULIAN_DATE_UNIX_EPOCH;
+  const centuries = (julianDate - JULIAN_DATE_J2000) / DAYS_PER_JULIAN_CENTURY;
+  const semiMajorAxisAu = atCentury(elements.semiMajorAxisAu, centuries);
+  const eccentricity = atCentury(elements.eccentricity, centuries);
+  return semiMajorAxisAu * (1 - eccentricity);
+}
+
 export function calculateOrbitalSpeedKmPerSecond(planet: PlanetId, instant: Date): number {
   const halfWindowMs = 30 * 60 * 1_000;
   const before = calculateHeliocentricPosition(planet, new Date(instant.getTime() - halfWindowMs));

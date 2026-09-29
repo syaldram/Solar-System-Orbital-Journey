@@ -21,6 +21,7 @@ export interface AppInterfaceOptions {
   readonly onShare: () => void;
   readonly onFocus: (body: SelectableBody) => void;
   readonly onFollow: (body: SelectableBody) => void;
+  readonly onResetCamera: () => void;
   readonly onReturnHome: () => void;
 }
 
@@ -46,21 +47,21 @@ function formatNumber(value: number, maximumFractionDigits = 2): string {
 const EXPLANATIONS: Readonly<Record<ViewMode, { title: string; html: string; status: string }>> = {
   sun: {
     title: 'Travel with Sun',
-    status: 'Planet sizes enhanced · orbital distances proportional',
+    status: 'Body ratios preserved · orbital distances proportional',
     html: `<p>The camera travels with the Sun, so it appears fixed while each planet follows its calculated Keplerian orbit.</p>
-      <ul><li>Orbital distances and eccentricities remain proportional.</li><li>Planet radii are enlarged for visibility.</li><li>The pale plane is the <em>ecliptic</em>: Earth’s orbital plane used as a Solar-System reference.</li></ul>`,
+      <ul><li>Orbital distances and eccentricities remain proportional.</li><li>The Sun and planets preserve their physical radius ratios; hollow markers reveal unresolved bodies.</li><li>The pale plane is the <em>ecliptic</em>: Earth’s orbital plane used as a Solar-System reference.</li></ul>`,
   },
   space: {
     title: 'Watch from Space',
     status: 'Rolling local window · straight tangent approximation',
-    html: `<p>This is a rolling window in a local galactic coordinate frame. The abstract grid—not the decorative stars—provides the stationary reference.</p>
-      <ul><li>The Sun moves at an adopted ${GALACTIC_MODEL.localSpeed.value} km/s.</li><li>Across 165 years it travels about ${GALACTIC_MODEL.fullJourneyDistance.value.toLocaleString('en')} AU.</li><li>The true galactic path curves too little to detect here, so this segment is rendered as a straight local tangent.</li></ul>`,
+    html: `<p>This is a rolling window in a local galactic coordinate frame. Along the Path keeps the Sun stable while the abstract grid flows backward smoothly.</p>
+      <ul><li>The Sun moves at an adopted ${GALACTIC_MODEL.localSpeed.value} km/s.</li><li>Across 165 years it travels about ${GALACTIC_MODEL.fullJourneyDistance.value.toLocaleString('en')} AU.</li><li>Full Journey preserves the real transverse scale and omits misleading century-long planet trails.</li><li>The true galactic path curves too little to detect here, so this segment is rendered as a straight local tangent.</li></ul>`,
   },
   galaxy: {
     title: 'Galaxy Overview',
     status: 'Schematic · not a star-by-star map',
     html: `<p>This orientation view locates the Sun roughly ${GALACTIC_MODEL.distanceFromCenter.value.toLocaleString('en')} light-years from the Milky Way’s center.</p>
-      <ul><li>The circular path and spiral structure are schematic.</li><li>One galactic orbit takes roughly ${GALACTIC_MODEL.approximatePeriod.value} million years.</li><li>Vertical and radial oscillations are omitted.</li></ul>`,
+      <ul><li>The diffuse disk, dust lanes, circular path, and spiral structure are schematic orientation artwork.</li><li>One galactic orbit takes roughly ${GALACTIC_MODEL.approximatePeriod.value} million years.</li><li>Vertical and radial oscillations are omitted.</li></ul>`,
   },
 };
 
@@ -141,6 +142,7 @@ export class AppInterface {
     element<HTMLButtonElement>('follow-planet').addEventListener('click', () => {
       if (this.selectedBody) options.onFollow(this.selectedBody);
     });
+    element<HTMLButtonElement>('reset-camera').addEventListener('click', options.onResetCamera);
     element<HTMLButtonElement>('replay-button').addEventListener('click', () => this.options.dispatch({ type: 'replay' }));
     element<HTMLButtonElement>('continue-button').addEventListener('click', () => {
       this.completion.hidden = true;
@@ -211,7 +213,10 @@ export class AppInterface {
 
     const explanation = EXPLANATIONS[state.frame];
     const rotationNote = state.speed === 'year' || state.speed === 'decade' ? ' · surface rotation stabilized' : '';
-    element<HTMLElement>('scene-status').innerHTML = `<span class="scene-status__dot" aria-hidden="true"></span><div><strong>${explanation.title}</strong><small>${explanation.status}${rotationNote}</small></div>`;
+    const status = state.frame === 'space' && state.cameraBookmark === 'full'
+      ? 'Full 165-year path · current calculated positions'
+      : explanation.status;
+    element<HTMLElement>('scene-status').innerHTML = `<span class="scene-status__dot" aria-hidden="true"></span><div><strong>${explanation.title}</strong><small>${status}${rotationNote}</small></div>`;
     element<HTMLElement>('explain-title').textContent = explanation.title;
     element<HTMLElement>('explain-copy').innerHTML = explanation.html;
 

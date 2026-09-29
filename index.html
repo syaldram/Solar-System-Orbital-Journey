@@ -62,7 +62,7 @@
 
         <div id="scene-status" class="scene-status" aria-live="polite">
           <span class="scene-status__dot" aria-hidden="true"></span>
-          <div><strong>Travel with Sun</strong><small>Planet sizes enhanced · orbital distances proportional</small></div>
+          <div><strong>Travel with Sun</strong><small>Body ratios preserved · orbital distances proportional</small></div>
         </div>
 
         <aside id="tour-panel" class="tour-panel" hidden aria-labelledby="tour-title">
@@ -93,7 +93,7 @@
               <div><dt>Eccentricity</dt><dd id="planet-eccentricity">Varies slightly with epoch</dd></div>
               <div><dt>Axial tilt</dt><dd id="planet-tilt"></dd></div>
             </dl>
-            <p class="fine-print">Planet sizes are enhanced for visibility. Orbital distances remain proportional.</p>
+            <p class="fine-print">Bodies share one enhanced radius scale, preserving their physical size ratios. Orbital distances remain proportional.</p>
           </details>
           <div class="planet-card__actions">
             <button id="focus-planet" class="button button--secondary button--small" type="button">Focus Camera</button>
@@ -125,6 +125,7 @@
               <option value="auto">Auto</option><option value="high">High</option><option value="balanced">Balanced</option><option value="low">Low</option>
             </select>
           </label>
+          <button id="reset-camera" class="button button--secondary button--small options-panel__reset" type="button">Reset View</button>
         </aside>
 
         <nav class="camera-bookmarks" aria-label="Camera bookmarks">
@@ -183,9 +184,10 @@
         </section>
         <section>
           <h3>Images</h3>
-          <p>Planet maps are adapted from NASA 3D Resources and the USGS MESSENGER global Mercury mosaic. Uranus is rendered procedurally from its observed blue-green color. Saturn and Neptune appearance maps are representative.</p>
+          <p>Planet maps are adapted from NASA 3D Resources and the USGS MESSENGER global Mercury mosaic. Uranus, the cloud veil, rings, solar granulation, and the diffuse Milky Way are locally generated representative treatments—not live observations. Saturn and Neptune appearance maps are representative.</p>
           <a href="https://science.nasa.gov/3d-resources/" target="_blank" rel="noreferrer">NASA 3D Resources</a>
           <a href="https://astrogeology.usgs.gov/search/map/mercury_messenger_mdis_global_mosaic_250m" target="_blank" rel="noreferrer">USGS Mercury mosaic</a>
+          <a href="https://science.nasa.gov/photojournal/our-milky-way-gets-a-makeover-artist-concept/" target="_blank" rel="noreferrer">NASA Milky Way concept</a>
         </section>
         <p class="fine-print">NASA and USGS are acknowledged as source organizations. Their use does not imply endorsement. Sources retrieved September 29, 2026.</p>
       </dialog>

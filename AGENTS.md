@@ -2,6 +2,20 @@
 
 This file applies to the entire repository. Preserve the product's scientific honesty, reference-frame lesson, accessibility, and static/private deployment model while making changes.
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in this repository's GitHub Issues using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The default five-role triage label vocabulary is used. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain-doc layout. See `docs/agents/domain.md`.
+
 ## Read the relevant source of truth
 
 - Read `docs/PRD.md` before changing product behavior, copy, interaction design, scope, or acceptance criteria.

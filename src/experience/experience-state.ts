@@ -27,6 +27,7 @@ export interface ExperienceState {
   readonly frame: ViewMode;
   readonly selectedBody: SelectableBody | null;
   readonly cameraBookmark: CameraBookmark;
+  readonly cameraRevision: number;
   readonly viewOptions: ViewOptions;
   readonly reducedMotion: boolean;
   readonly quality: QualityPreference;
@@ -77,6 +78,7 @@ export function createInitialExperienceState(today: Date): ExperienceState {
     frame: 'sun',
     selectedBody: null,
     cameraBookmark: 'hero',
+    cameraRevision: 0,
     viewOptions: {
       orbitPaths: true,
       labels: true,
@@ -137,11 +139,12 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
             frame: action.frame,
             trailRevision: state.trailRevision + 1,
             cameraBookmark: action.frame === 'galaxy' ? 'full' : state.cameraBookmark,
+            cameraRevision: state.cameraRevision + 1,
           };
     case 'select':
       return { ...state, selectedBody: action.body };
     case 'set-bookmark':
-      return { ...state, cameraBookmark: action.bookmark };
+      return { ...state, cameraBookmark: action.bookmark, cameraRevision: state.cameraRevision + 1 };
     case 'set-view-option':
       return {
         ...state,
@@ -163,6 +166,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         journeyComplete: false,
         frame: 'sun',
         cameraBookmark: 'inner',
+        cameraRevision: state.cameraRevision + 1,
         tour: { status: 'running', chapter: 0 },
       };
     case 'next-chapter': {
@@ -182,6 +186,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         isPlaying: false,
         frame: 'sun',
         cameraBookmark: 'inner',
+        cameraRevision: state.cameraRevision + 1,
         tour: { status: 'running', chapter: 0 },
       };
   }

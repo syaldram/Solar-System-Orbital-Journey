@@ -24,8 +24,14 @@ At year-per-second and decade-per-second playback, surface rotation is visually 
 
 The local Sun model adopts 220 km/s. Across 165 Julian years the Sun travels about 7,657 AU (about 0.121 light-years), while traversing only about 0.000258° of a roughly 230-million-year galactic orbit. The local path is therefore drawn as a straight tangent. The rolling view uses an abstract coordinate grid rather than pretending nearby stars are fixed.
 
+The Along the Path camera is a moving presentation of that same space-frame calculation: it keeps the Sun near a stable screen position while the abstract galactic guides move backward continuously. This camera treatment does not alter the calculated reference frame or recycle the Solar System's position. The Full Journey overview shows the Sun and planets at their current calculated positions with the real transverse-to-forward distance ratio. It omits full-length planetary trails so the visualization does not imply that a corkscrew path is an absolute physical structure.
+
 **Galaxy Overview** is explicitly schematic. It places the Sun about 26,000 light-years from the center on a simplified circular path and omits vertical and radial oscillations. The rendered spiral is not a star-by-star map and does not assert exact spiral-arm geometry.
+
+Its diffuse disk, central bar, dust lanes, spiral structure, nebular color, and sparse foreground stars are orientation artwork rather than a catalog of observed stellar positions. The Sun's orbit line and direction arrow are likewise explanatory overlays.
 
 ## Display scale
 
-Relative semi-major-axis distances and eccentricities are preserved in Solar-System views. Planet radii and the Sun are enhanced independently for legibility. Wide views replace tiny bodies with visible markers and labels. The full local journey keeps the true distance ratio and represents the Solar System as a compact marker.
+Relative semi-major-axis distances and eccentricities are preserved in Solar-System views. One shared display factor enlarges every body radius relative to orbital distances, preserving the physical radius ratios among the Sun and all eight planets. The factor places the enhanced Sun at approximately one-third of Mercury's closest displayed orbital distance.
+
+Wide views supplement unresolved globes with constant-screen-size hollow markers and labels; these interface markers do not change calculated body positions or rendered globe radii. The Full Journey overview preserves the true transverse-to-forward distance ratio, displays the Sun and all eight planets at the current simulated instant, and uses faint local orbit ellipses only as orientation guides.
