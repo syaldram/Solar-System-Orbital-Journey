@@ -93,6 +93,16 @@ const ASTRONOMICAL_UNIT = {
   },
 } satisfies SourcedConstant<'km'>;
 
+const LIGHT_YEAR = {
+  value: 9_460_730_472_580.8,
+  unit: 'km',
+  source: {
+    organization: 'International Astronomical Union',
+    url: 'https://www.iau.org/static/resolutions/IAU2015_English.pdf',
+    retrievedAt: '2026-09-29',
+  },
+} satisfies SourcedConstant<'km'>;
+
 const J2000_OBLIQUITY = {
   value: 23.43928,
   unit: 'degrees',
@@ -136,9 +146,21 @@ export function eclipticToGalactic(vector: Vector3Au): Vector3Au {
 }
 
 function localSunPosition(instant: Date, epoch: Date): Vector3Au {
+  return { x: 0, y: calculateLocalTravelDistance(instant, epoch).astronomicalUnits, z: 0 };
+}
+
+export interface LocalTravelDistance {
+  readonly astronomicalUnits: number;
+  readonly lightYears: number;
+}
+
+export function calculateLocalTravelDistance(instant: Date, epoch: Date): LocalTravelDistance {
   const elapsedSeconds = (instant.getTime() - epoch.getTime()) / 1_000;
-  const distanceAu = (elapsedSeconds * GALACTIC_MODEL.localSpeed.value) / ASTRONOMICAL_UNIT.value;
-  return { x: 0, y: distanceAu, z: 0 };
+  const distanceKm = elapsedSeconds * GALACTIC_MODEL.localSpeed.value;
+  return {
+    astronomicalUnits: distanceKm / ASTRONOMICAL_UNIT.value,
+    lightYears: distanceKm / LIGHT_YEAR.value,
+  };
 }
 
 export function calculateSystemSnapshot(

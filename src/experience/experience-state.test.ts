@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createInitialExperienceState, updateExperience } from './experience-state';
+import {
+  createInitialExperienceState,
+  getAlongPathMotion,
+  updateExperience,
+} from './experience-state';
 import { applyCurrentTourChapter } from './tour';
 
 const TODAY = new Date('2026-09-29T12:00:00.000Z');
@@ -63,5 +67,34 @@ describe('experience state', () => {
 
     expect(repeated.cameraBookmark).toBe('path');
     expect(repeated.cameraRevision).toBe(first.cameraRevision + 1);
+  });
+
+  it('keeps Along the Path distance accurate while stabilizing only high-speed guide flow', () => {
+    let state = createInitialExperienceState(TODAY);
+    state = updateExperience(state, { type: 'set-speed', speed: 'decade' });
+    state = updateExperience(state, { type: 'play' });
+    state = updateExperience(state, { type: 'advance', realSeconds: 1 });
+
+    const motion = getAlongPathMotion(state);
+
+    expect(motion.distanceAu).toBeCloseTo(464.1, 1);
+    expect(motion.distanceLightYears).toBeCloseTo(0.00734, 5);
+    expect(motion.guideFlow).toBe('stabilized');
+    expect(motion.apparentGuideAuPerSecond).toBeLessThan(motion.calculatedGuideAuPerSecond);
+  });
+
+  it('uses subdued stepped guides without changing the numerical distance in reduced motion', () => {
+    let state = createInitialExperienceState(TODAY);
+    state = updateExperience(state, { type: 'set-speed', speed: 'year' });
+    state = updateExperience(state, { type: 'play' });
+    state = updateExperience(state, { type: 'advance', realSeconds: 1 });
+    const ordinaryDistance = getAlongPathMotion(state).distanceAu;
+
+    state = updateExperience(state, { type: 'set-reduced-motion', enabled: true });
+    const reduced = getAlongPathMotion(state);
+
+    expect(reduced.guideFlow).toBe('stepped');
+    expect(reduced.distanceAu).toBe(ordinaryDistance);
+    expect(reduced.apparentGuideAuPerSecond).toBeLessThan(reduced.calculatedGuideAuPerSecond);
   });
 });
