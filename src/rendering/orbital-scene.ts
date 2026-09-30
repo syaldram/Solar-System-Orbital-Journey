@@ -21,6 +21,7 @@ import {
 } from './display-scale';
 import {
   createAtmosphereMaterial,
+  createCoronaTexture,
   createEarthCloudTexture,
   createGalaxyTexture,
   createGlowTexture,
@@ -94,6 +95,7 @@ export class OrbitalScene {
   private readonly sunMesh: THREE.Mesh;
   private readonly sunMaterial: THREE.ShaderMaterial;
   private readonly sunGlow: THREE.Sprite;
+  private readonly sunCoronaLayers: readonly THREE.Sprite[];
   private readonly planeOverlay: THREE.Mesh;
   private readonly coordinateGuides: THREE.LineSegments;
   private readonly depthMarkers: THREE.Points;
@@ -188,10 +190,35 @@ export class OrbitalScene {
     this.sunMesh.name = 'sun';
     this.solarGroup.add(this.sunMesh);
 
+    const coronaColors = [0xffd69b, 0xffaa5a, 0xff7d3a] as const;
+    const coronaScales = [7.2, 8.7, 10.2] as const;
+    this.sunCoronaLayers = coronaScales.map((scale, index) => {
+      const material = new THREE.SpriteMaterial({
+        map: createCoronaTexture(index),
+        color: coronaColors[index],
+        opacity: 0.58 - index * 0.12,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: false,
+        rotation: (index - 1) * 0.31,
+      });
+      material.userData.baseOpacity = material.opacity;
+      material.userData.baseRotation = material.rotation;
+      const corona = new THREE.Sprite(material);
+      corona.scale.set(SUN_DISPLAY_RADIUS * scale, SUN_DISPLAY_RADIUS * scale, 1);
+      corona.userData.baseScale = SUN_DISPLAY_RADIUS * scale;
+      corona.userData.driftRate = [0.012, -0.008, 0.005][index] ?? 0;
+      corona.userData.breathPhase = index * 1.9;
+      this.solarGroup.add(corona);
+      return corona;
+    });
+
     const glowMaterial = new THREE.SpriteMaterial({
       map: createGlowTexture(),
       color: 0xffb55c,
       transparent: true,
+      opacity: 0.72,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -1133,6 +1160,26 @@ export class OrbitalScene {
     if (!reducedMotion) this.sunSurfaceTime += elapsedSeconds * 0.22;
     const timeUniform = this.sunMaterial.uniforms.time;
     if (timeUniform) timeUniform.value = this.sunSurfaceTime;
+
+    const glowScale = SUN_DISPLAY_RADIUS * 6.2;
+    const glowBreath = reducedMotion ? 1 : 1 + Math.sin(this.sunSurfaceTime * 0.7) * 0.025;
+    this.sunGlow.scale.set(glowScale * glowBreath, glowScale * glowBreath, 1);
+    if (this.sunGlow.material instanceof THREE.SpriteMaterial) {
+      this.sunGlow.material.opacity = 0.72 * (reducedMotion ? 1 : 1 + Math.sin(this.sunSurfaceTime * 0.63) * 0.055);
+    }
+
+    for (const corona of this.sunCoronaLayers) {
+      if (!(corona.material instanceof THREE.SpriteMaterial)) continue;
+      const baseRotation = typeof corona.material.userData.baseRotation === 'number'
+        ? corona.material.userData.baseRotation
+        : 0;
+      const driftRate = typeof corona.userData.driftRate === 'number' ? corona.userData.driftRate : 0;
+      corona.material.rotation = baseRotation + this.sunSurfaceTime * driftRate;
+      const baseScale = typeof corona.userData.baseScale === 'number' ? corona.userData.baseScale : 1;
+      const breathPhase = typeof corona.userData.breathPhase === 'number' ? corona.userData.breathPhase : 0;
+      const breath = reducedMotion ? 1 : 1 + Math.sin(this.sunSurfaceTime * 0.31 + breathPhase) * 0.018;
+      corona.scale.set(baseScale * breath, baseScale * breath, 1);
+    }
   }
 
   private applyQuality(preference: QualityPreference, frame: ViewMode): void {
@@ -1147,6 +1194,10 @@ export class OrbitalScene {
     const galaxyCount = quality === 'high' ? 1_200 : quality === 'balanced' ? 700 : 320;
     this.starField.geometry.setDrawRange(0, frame === 'galaxy' ? galaxyForegroundCount : localStarCount);
     this.galaxyStars.geometry.setDrawRange(0, galaxyCount);
+    const coronaLayerCount = quality === 'high' ? 3 : quality === 'balanced' ? 2 : 1;
+    this.sunCoronaLayers.forEach((layer, index) => {
+      layer.visible = index < coronaLayerCount && frame !== 'galaxy';
+    });
     for (const atmosphere of this.atmosphereMeshes.values()) atmosphere.visible = quality !== 'low';
     if (this.earthClouds) this.earthClouds.visible = quality === 'high';
     for (const material of this.ringMaterials) {

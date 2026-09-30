@@ -215,6 +215,73 @@ test('keeps accurate Along the Path distance available with reduced motion', asy
   await expect(pathMotion).toBeHidden();
 });
 
+test('describes procedural solar presentation and honors reduced motion', async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+  await page.goto('./?view=sun&camera=inner');
+
+  const solarPresentation = page.getByRole('status', { name: 'Solar presentation' });
+  await expect(solarPresentation).toContainText('Decorative solar motion active');
+
+  await page.getByRole('button', { name: 'Explain this view' }).click();
+  await expect(page.getByText(/procedural presentation effects, not modeled solar weather/i)).toBeVisible();
+  await expect(page.getByText(/real presentation time, independently of simulation speed/i)).toBeVisible();
+  await page.getByRole('button', { name: 'Close explanation' }).click();
+
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Reduce motion').check();
+  await expect(solarPresentation).toContainText('Decorative solar motion frozen for reduced motion');
+  await page.waitForTimeout(250);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('adapts procedural solar detail to the selected visual quality', async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+  await page.goto('./?view=sun&camera=inner');
+
+  const solarPresentation = page.getByRole('status', { name: 'Solar presentation' });
+  await expect(solarPresentation).toContainText('Layered corona detail: full');
+
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Visual quality').selectOption('balanced');
+  await expect(solarPresentation).toContainText('Layered corona detail: reduced');
+  await page.getByLabel('Visual quality').selectOption('low');
+  await expect(solarPresentation).toContainText('Layered corona detail: simplified');
+  await page.waitForTimeout(250);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('keeps solar presentation independent of both playback clocks', async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+  await page.goto('./?view=sun&camera=inner');
+
+  const solarPresentation = page.getByRole('status', { name: 'Solar presentation' });
+  await expect(solarPresentation).toContainText('Driven by real presentation time; playback speed independent');
+
+  for (const speed of ['day', 'month', 'year', 'decade']) {
+    await page.getByLabel('Speed').selectOption(speed);
+    await expect(page.getByLabel('Speed')).toHaveValue(speed);
+    await expect(solarPresentation).toContainText('Decorative solar motion active');
+  }
+
+  await page.getByRole('button', { name: 'Play simulation' }).click();
+  await expect(page.getByRole('button', { name: 'Pause simulation' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Pause simulation' }).click();
+  await expect(solarPresentation).toContainText('Decorative solar motion active');
+
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+  await page.getByLabel('Speed').selectOption('25');
+  await expect(page.getByLabel('Speed')).toHaveValue('25');
+  await page.getByRole('button', { name: 'Travel with Sun' }).click();
+  await expect(solarPresentation).toContainText('Driven by real presentation time; playback speed independent');
+
+  expect(pageErrors).toEqual([]);
+});
+
 test('toggles Planet follow from the selected planet card', async ({ page }) => {
   await page.goto('./?view=space&body=saturn&camera=path');
 
