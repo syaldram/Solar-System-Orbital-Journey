@@ -116,18 +116,21 @@ const appInterface = new AppInterface({
   },
   onShare: () => void shareCurrentView(),
   onFocus: (body) => {
+    dispatch({ type: 'focus-camera' });
     if (state.frame === 'galaxy' || state.cameraBookmark === 'full') {
       dispatch({ type: 'set-frame', frame: 'space' });
       dispatch({ type: 'set-bookmark', bookmark: 'path' });
     }
     scene?.focus(body);
   },
-  onFollow: (body) => {
-    scene?.follow(body);
-    appInterface.showToast(`Camera is now following ${body === 'sun' ? 'the Sun' : getPlanetProfile(body).name}.`);
+  onFollow: (planet) => {
+    dispatch({ type: 'toggle-planet-follow', planet });
   },
-  onResetCamera: () => scene?.resetCamera(),
-  onReturnHome: () => scene?.follow(null),
+  onResetCamera: () => {
+    dispatch({ type: 'reset-camera' });
+    scene?.resetCamera();
+  },
+  onReturnHome: () => dispatch({ type: 'return-home' }),
 });
 
 if (Object.keys(shared).length > 0) appInterface.openSimulation();
@@ -150,6 +153,7 @@ try {
 }
 
 function dispatch(action: ExperienceAction): void {
+  const previousState = state;
   const previousTourKey = `${state.tour.status}:${state.tour.chapter}`;
   let next = updateExperience(state, action);
   const nextTourKey = `${next.tour.status}:${next.tour.chapter}`;
@@ -164,6 +168,18 @@ function dispatch(action: ExperienceAction): void {
   if (action.type !== 'advance' || now - lastInterfaceRenderAt >= 100 || state.journeyComplete) {
     lastInterfaceRenderAt = now;
     renderInterface();
+  }
+  if (previousState.followedPlanet !== state.followedPlanet) {
+    if (state.followedPlanet) {
+      const name = getPlanetProfile(state.followedPlanet).name;
+      const movedFromFullJourney = previousState.frame === 'space' && previousState.cameraBookmark === 'full';
+      appInterface.showToast(movedFromFullJourney
+        ? `Switched to the Along the Path camera to follow ${name}.`
+        : `Camera is now following ${name}.`);
+    } else if (previousState.followedPlanet) {
+      const name = getPlanetProfile(previousState.followedPlanet).name;
+      appInterface.showToast(`Stopped following ${name}. Camera position is unchanged.`);
+    }
   }
 }
 
@@ -244,6 +260,7 @@ function animate(now: number): void {
         bookmark: state.cameraBookmark,
         cameraRevision: state.cameraRevision,
         selectedBody: state.selectedBody,
+        followedPlanet: state.followedPlanet,
         viewOptions: state.viewOptions,
         quality: state.quality,
         reducedMotion: state.reducedMotion,
