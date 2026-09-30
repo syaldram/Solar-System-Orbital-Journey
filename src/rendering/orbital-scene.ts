@@ -36,6 +36,7 @@ export interface SceneState {
   readonly bookmark: CameraBookmark;
   readonly cameraRevision: number;
   readonly selectedBody: SelectableBody | null;
+  readonly followedPlanet: PlanetId | null;
   readonly viewOptions: ViewOptions;
   readonly quality: QualityPreference;
   readonly reducedMotion: boolean;
@@ -130,13 +131,17 @@ export class OrbitalScene {
     startTarget: THREE.Vector3;
     endTarget: THREE.Vector3;
     startedAt: number;
+    source: 'composition' | 'command' | 'follow';
   } | null = null;
   private frameSamples: number[] = [];
   private lastFrameAt = performance.now();
   private autoQualityAdapted = false;
-  private followedBody: SelectableBody | null = null;
+  private followedPlanet: PlanetId | null = null;
   private lastFollowPosition: THREE.Vector3 | null = null;
-  private pendingFocus: SelectableBody | null = null;
+  private pendingFocus: {
+    readonly body: SelectableBody;
+    readonly source: 'command' | 'follow';
+  } | null = null;
   private hoveredBody: SelectableBody | null = null;
   private sunSurfaceTime = 0;
   private lastSunAnimationAt = performance.now();
@@ -329,10 +334,12 @@ export class OrbitalScene {
 
   render(state: SceneState, nowMs: number): void {
     this.currentState = state;
+    this.syncFollowState(state.followedPlanet);
     this.applyView(state);
     this.applyCamera(state, nowMs);
     this.applyPendingFocus(nowMs);
     this.updateCameraTween(state.reducedMotion, nowMs);
+    this.applyFollow(state.followedPlanet, state.frame);
     this.controls.update();
     this.updatePathGuides(state, nowMs);
     this.updateSunSurface(state.reducedMotion, nowMs);
@@ -342,19 +349,10 @@ export class OrbitalScene {
   }
 
   focus(body: SelectableBody): void {
-    this.followedBody = null;
-    this.lastFollowPosition = null;
-    this.pendingFocus = body;
-  }
-
-  follow(body: SelectableBody | null): void {
-    this.followedBody = body;
-    this.lastFollowPosition = null;
-    if (body) this.pendingFocus = body;
+    this.pendingFocus = { body, source: 'command' };
   }
 
   resetCamera(): void {
-    this.followedBody = null;
     this.lastFollowPosition = null;
     this.pendingFocus = null;
     this.currentCameraRevision = -1;
@@ -752,12 +750,11 @@ export class OrbitalScene {
     this.updateSelection(state.selectedBody);
     this.applyQuality(state.quality, state.frame);
     this.applyControlConstraints(state.frame);
-    this.applyFollow(state.frame);
   }
 
-  private applyFollow(frame: ViewMode): void {
-    if (!this.followedBody || frame === 'galaxy') return;
-    const object = this.followedBody === 'sun' ? this.sunMesh : this.planetMeshes.get(this.followedBody);
+  private applyFollow(planet: PlanetId | null, frame: ViewMode): void {
+    if (!planet || frame === 'galaxy') return;
+    const object = this.planetMeshes.get(planet);
     if (!object?.visible) return;
     const current = new THREE.Vector3();
     object.getWorldPosition(current);
@@ -771,6 +768,18 @@ export class OrbitalScene {
     }
     this.controls.target.copy(current);
     this.lastFollowPosition = current;
+  }
+
+  private syncFollowState(planet: PlanetId | null): void {
+    if (planet === this.followedPlanet) return;
+    if (planet === null) {
+      if (this.pendingFocus?.source === 'follow') this.pendingFocus = null;
+      if (this.cameraTween?.source === 'follow') this.cameraTween = null;
+    } else {
+      this.pendingFocus = { body: planet, source: 'follow' };
+    }
+    this.followedPlanet = planet;
+    this.lastFollowPosition = null;
   }
 
   private updateTrails(state: SceneState, positions: Map<PlanetId, Vector3Au>, sun: Vector3Au): void {
@@ -1060,9 +1069,6 @@ export class OrbitalScene {
     this.currentBookmark = state.bookmark;
     this.currentFrame = state.frame;
     this.currentCameraRevision = state.cameraRevision;
-    this.followedBody = null;
-    this.lastFollowPosition = null;
-
     let position = new THREE.Vector3(18, 28, 70);
     let target = new THREE.Vector3(0, 0, 0);
     const narrowViewport = this.camera.aspect < 0.72;
@@ -1094,7 +1100,7 @@ export class OrbitalScene {
       }
     }
 
-    this.startCameraMove(position, target, nowMs, state.reducedMotion || isInitialComposition);
+    this.startCameraMove(position, target, nowMs, state.reducedMotion || isInitialComposition, 'composition');
   }
 
   private applyPendingFocus(nowMs: number): void {
@@ -1102,7 +1108,7 @@ export class OrbitalScene {
     const isWideView = this.currentState.frame === 'galaxy'
       || (this.currentState.frame === 'space' && this.currentState.bookmark === 'full');
     if (isWideView) return;
-    const body = this.pendingFocus;
+    const { body, source } = this.pendingFocus;
     const object = body === 'sun' ? this.sunMesh : this.planetMeshes.get(body);
     if (!object?.visible) return;
     const world = new THREE.Vector3();
@@ -1110,7 +1116,7 @@ export class OrbitalScene {
     const radius = body === 'sun' ? SUN_DISPLAY_RADIUS : planetDisplayRadius(body);
     const distance = radius * (body === 'sun' ? 6 : 8);
     const offset = new THREE.Vector3(1, 0.55, 1).normalize().multiplyScalar(distance);
-    this.startCameraMove(world.clone().add(offset), world, nowMs, this.currentState.reducedMotion);
+    this.startCameraMove(world.clone().add(offset), world, nowMs, this.currentState.reducedMotion, source);
     this.pendingFocus = null;
   }
 
@@ -1119,6 +1125,7 @@ export class OrbitalScene {
     target: THREE.Vector3,
     nowMs: number,
     reducedMotion: boolean,
+    source: 'composition' | 'command' | 'follow',
   ): void {
     this.cameraTween = {
       start: this.camera.position.clone(),
@@ -1126,6 +1133,7 @@ export class OrbitalScene {
       startTarget: this.controls.target.clone(),
       endTarget: target,
       startedAt: reducedMotion ? nowMs - CAMERA_TWEEN_DURATION_MS : nowMs,
+      source,
     };
   }
 

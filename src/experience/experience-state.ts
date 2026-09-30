@@ -33,6 +33,7 @@ export interface ExperienceState {
   readonly galacticCompletionDismissed: boolean;
   readonly frame: ViewMode;
   readonly selectedBody: SelectableBody | null;
+  readonly followedPlanet: PlanetId | null;
   readonly cameraBookmark: CameraBookmark;
   readonly cameraRevision: number;
   readonly viewOptions: ViewOptions;
@@ -74,6 +75,10 @@ export type ExperienceAction =
   | { readonly type: 'dismiss-completion' }
   | { readonly type: 'set-frame'; readonly frame: ViewMode }
   | { readonly type: 'select'; readonly body: SelectableBody | null }
+  | { readonly type: 'toggle-planet-follow'; readonly planet: PlanetId }
+  | { readonly type: 'focus-camera' }
+  | { readonly type: 'reset-camera' }
+  | { readonly type: 'return-home' }
   | { readonly type: 'set-bookmark'; readonly bookmark: CameraBookmark }
   | { readonly type: 'set-view-option'; readonly option: keyof ViewOptions; readonly enabled: boolean }
   | { readonly type: 'set-reduced-motion'; readonly enabled: boolean }
@@ -159,6 +164,7 @@ export function createInitialExperienceState(today: Date): ExperienceState {
     galacticCompletionDismissed: false,
     frame: 'sun',
     selectedBody: null,
+    followedPlanet: null,
     cameraBookmark: 'hero',
     cameraRevision: 0,
     viewOptions: {
@@ -271,15 +277,47 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         : {
             ...state,
             frame: action.frame,
+            selectedBody: action.frame === 'galaxy' ? null : state.selectedBody,
+            followedPlanet: null,
             isPlaying: false,
             trailRevision: state.trailRevision + 1,
             cameraBookmark: action.frame === 'galaxy' ? 'full' : state.cameraBookmark,
             cameraRevision: state.cameraRevision + 1,
           };
     case 'select':
-      return { ...state, selectedBody: action.body };
+      if (state.frame === 'galaxy' && action.body !== null) return state;
+      return {
+        ...state,
+        selectedBody: action.body,
+        followedPlanet: action.body === state.selectedBody ? state.followedPlanet : null,
+      };
+    case 'toggle-planet-follow':
+      if (state.selectedBody !== action.planet || state.frame === 'galaxy') return state;
+      if (state.followedPlanet === action.planet) return { ...state, followedPlanet: null };
+      if (state.frame === 'space' && state.cameraBookmark === 'full') {
+        return {
+          ...state,
+          followedPlanet: action.planet,
+          cameraBookmark: 'path',
+          cameraRevision: state.cameraRevision + 1,
+        };
+      }
+      return {
+        ...state,
+        followedPlanet: action.planet,
+      };
+    case 'focus-camera':
+    case 'reset-camera':
+      return { ...state, followedPlanet: null };
+    case 'return-home':
+      return { ...state, isPlaying: false, followedPlanet: null };
     case 'set-bookmark':
-      return { ...state, cameraBookmark: action.bookmark, cameraRevision: state.cameraRevision + 1 };
+      return {
+        ...state,
+        followedPlanet: null,
+        cameraBookmark: action.bookmark,
+        cameraRevision: state.cameraRevision + 1,
+      };
     case 'set-view-option':
       return {
         ...state,
@@ -304,6 +342,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         galacticJourneyComplete: false,
         galacticCompletionDismissed: false,
         frame: 'sun',
+        followedPlanet: null,
         cameraBookmark: 'inner',
         cameraRevision: state.cameraRevision + 1,
         tour: { status: 'running', chapter: 0 },
@@ -311,9 +350,18 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     case 'next-chapter': {
       if (state.tour.status !== 'running') return state;
       if (state.tour.chapter >= LAST_TOUR_CHAPTER) {
-        return { ...state, isPlaying: false, tour: { status: 'complete', chapter: LAST_TOUR_CHAPTER } };
+        return {
+          ...state,
+          isPlaying: false,
+          followedPlanet: null,
+          tour: { status: 'complete', chapter: LAST_TOUR_CHAPTER },
+        };
       }
-      return { ...state, tour: { status: 'running', chapter: state.tour.chapter + 1 } };
+      return {
+        ...state,
+        followedPlanet: null,
+        tour: { status: 'running', chapter: state.tour.chapter + 1 },
+      };
     }
     case 'skip-tour':
       return { ...state, isPlaying: false, tour: { ...state.tour, status: 'skipped' } };
@@ -328,6 +376,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         galacticCompletionDismissed: false,
         isPlaying: false,
         frame: 'sun',
+        followedPlanet: null,
         cameraBookmark: 'inner',
         cameraRevision: state.cameraRevision + 1,
         tour: { status: 'running', chapter: 0 },

@@ -1,4 +1,5 @@
-import type { PlanetProfile } from '../astronomy/planet-data';
+import { getPlanetProfile, type PlanetProfile } from '../astronomy/planet-data';
+import type { PlanetId } from '../astronomy/solar-system';
 import { GALACTIC_MODEL } from '../astronomy/reference-frames';
 import type {
   AlongPathMotion,
@@ -23,7 +24,7 @@ export interface AppInterfaceOptions {
   readonly onEnter: (mode: 'tour' | 'free') => void;
   readonly onShare: () => void;
   readonly onFocus: (body: SelectableBody) => void;
-  readonly onFollow: (body: SelectableBody) => void;
+  readonly onFollow: (planet: PlanetId) => void;
   readonly onResetCamera: () => void;
   readonly onReturnHome: () => void;
 }
@@ -157,7 +158,7 @@ export class AppInterface {
       if (this.selectedBody) options.onFocus(this.selectedBody);
     });
     element<HTMLButtonElement>('follow-planet').addEventListener('click', () => {
-      if (this.selectedBody) options.onFollow(this.selectedBody);
+      if (this.selectedBody && this.selectedBody !== 'sun') options.onFollow(this.selectedBody);
     });
     element<HTMLButtonElement>('reset-camera').addEventListener('click', options.onResetCamera);
     element<HTMLButtonElement>('replay-button').addEventListener('click', () => {
@@ -309,6 +310,12 @@ export class AppInterface {
 
     this.selectedBody = state.selectedBody;
     this.planetCard.hidden = state.selectedBody === null || state.selectedBody === 'sun';
+    const follow = element<HTMLButtonElement>('follow-planet');
+    const isFollowing = state.followedPlanet !== null && state.followedPlanet === state.selectedBody;
+    follow.setAttribute('aria-pressed', String(isFollowing));
+    follow.textContent = isFollowing && state.followedPlanet
+      ? `Stop Following ${getPlanetProfile(state.followedPlanet).name}`
+      : 'Follow Planet';
     this.renderTour(state);
     const journeyComplete = isGalaxy ? state.galacticJourneyComplete : state.journeyComplete;
     this.completion.hidden = !journeyComplete || (isGalaxy && state.galacticCompletionDismissed);
