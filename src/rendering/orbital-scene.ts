@@ -42,6 +42,7 @@ export interface SceneState {
   readonly rotationStabilized: boolean;
   readonly trailRevision: number;
   readonly journeyProgress: number;
+  readonly galacticProgress: number;
 }
 
 export interface OrbitalSceneOptions {
@@ -88,6 +89,7 @@ export class OrbitalScene {
   private readonly localPath: THREE.Line;
   private readonly fullJourneyPath: THREE.Line;
   private readonly galaxySunMarker: THREE.Mesh;
+  private readonly galaxyDirectionArrow: THREE.ArrowHelper;
   private readonly starField: THREE.Points;
   private readonly galaxyStars: THREE.Points;
   private readonly galaxyDiskMaterials: readonly THREE.MeshBasicMaterial[];
@@ -227,6 +229,7 @@ export class OrbitalScene {
     const galaxy = this.createGalaxy();
     this.galaxyStars = galaxy.stars;
     this.galaxySunMarker = galaxy.sunMarker;
+    this.galaxyDirectionArrow = galaxy.directionArrow;
     this.galaxyDiskMaterials = galaxy.diskMaterials;
     this.galaxyGroup.add(galaxy.root);
 
@@ -459,6 +462,7 @@ export class OrbitalScene {
     root: THREE.Group;
     stars: THREE.Points;
     sunMarker: THREE.Mesh;
+    directionArrow: THREE.ArrowHelper;
     diskMaterials: readonly THREE.MeshBasicMaterial[];
   } {
     const root = new THREE.Group();
@@ -534,7 +538,7 @@ export class OrbitalScene {
     root.add(sunMarker);
     const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(65, 0, 0), 8, 0xf4b860, 2.2, 1.2);
     root.add(arrow);
-    return { root, stars, sunMarker, diskMaterials: [primaryDiskMaterial, hazeMaterial] };
+    return { root, stars, sunMarker, directionArrow: arrow, diskMaterials: [primaryDiskMaterial, hazeMaterial] };
   }
 
   private createBodyMarker(id: SelectableBody, text: string): void {
@@ -636,6 +640,13 @@ export class OrbitalScene {
 
     this.sunMesh.visible = !isGalaxy;
     this.sunGlow.visible = !isGalaxy;
+    if (isGalaxy) {
+      const angle = state.galacticProgress * Math.PI * 2;
+      const markerPosition = new THREE.Vector3(Math.cos(angle) * 65, 0, Math.sin(angle) * 65);
+      this.galaxySunMarker.position.copy(markerPosition);
+      this.galaxyDirectionArrow.position.copy(markerPosition);
+      this.galaxyDirectionArrow.setDirection(new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle)));
+    }
     this.localGuides.position.set(0, 0, 0);
     if (isFullJourney) {
       const journeyPosition = -FULL_JOURNEY_LENGTH / 2 + state.journeyProgress * FULL_JOURNEY_LENGTH;

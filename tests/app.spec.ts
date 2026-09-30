@@ -32,6 +32,22 @@ test('runs and skips the guided journey through visible controls', async ({ page
   await expect(page.getByText('Chapter 2 of 5')).toBeHidden();
 });
 
+test('enters the guided Galaxy Overview chapter paused and allows continuing without playback', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Begin Journey' }).click();
+
+  for (let chapter = 2; chapter <= 5; chapter += 1) {
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByText(`Chapter ${chapter} of 5`)).toBeVisible();
+  }
+
+  await expect(page.getByRole('button', { name: 'Galaxy Overview' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('0 million years', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
+  await page.getByRole('button', { name: 'Finish Journey' }).click();
+  await expect(page.getByText('Chapter 5 of 5')).toBeHidden();
+});
+
 test('supports keyboard playback and switching reference frames', async ({ page }) => {
   await page.goto('./');
   await page.getByRole('button', { name: 'Explore Freely' }).click();
@@ -97,6 +113,64 @@ test('offers a camera reset in every view', async ({ page }) => {
   await page.getByRole('button', { name: 'View options' }).click();
   await expect(page.getByRole('button', { name: 'Reset View' })).toBeVisible();
   await page.getByRole('button', { name: 'Reset View' }).click();
+});
+
+test('adapts the shared timeline to paused Galactic elapsed time controls', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Explore Freely' }).click();
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+
+  await expect(page.getByText('Galactic elapsed time', { exact: true })).toBeVisible();
+  await expect(page.getByText('0 million years', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByLabel('Speed').getByRole('option')).toHaveText([
+    '1 million years/s',
+    '5 million years/s',
+    '10 million years/s',
+    '25 million years/s',
+  ]);
+  await expect(page.getByLabel('Speed')).toHaveValue('5');
+
+  await page.getByLabel('Speed').selectOption('25');
+  await page.getByRole('button', { name: 'Play Galactic Orbit' }).click();
+  await expect(page.getByRole('button', { name: 'Pause Galactic Orbit' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('42');
+
+  await expect(page.getByText('42 million years', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
+  await page.getByRole('button', { name: 'Return to Present' }).click();
+  await expect(page.getByText('0 million years', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Speed')).toHaveValue('25');
+
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('230');
+  await expect(page.getByRole('heading', { name: 'Schematic orbit complete' })).toBeVisible();
+  await expect(page.getByText('Approximately 230 million years elapsed', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue Exploring' }).click();
+  await expect(page.getByRole('heading', { name: 'Schematic orbit complete' })).toBeHidden();
+
+  await page.getByRole('button', { name: 'Return to Present' }).click();
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('230');
+  await page.getByRole('button', { name: 'Replay from Present' }).click();
+  await expect(page.getByRole('button', { name: 'Pause Galactic Orbit' })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('moves the schematic Sun marker when Galactic elapsed time plays', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Explore Freely' }).click();
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+  await page.getByLabel('Speed').selectOption('25');
+  await page.waitForTimeout(900);
+
+  const sunMarker = page.getByRole('button', { name: 'Select Sun' });
+  const before = await sunMarker.boundingBox();
+  await page.getByRole('button', { name: 'Play Galactic Orbit' }).click();
+  await page.waitForTimeout(650);
+  await page.getByRole('button', { name: 'Pause Galactic Orbit' }).click();
+  const after = await sunMarker.boundingBox();
+
+  expect(before).not.toBeNull();
+  expect(after).not.toBeNull();
+  expect(Math.hypot((after?.x ?? 0) - (before?.x ?? 0), (after?.y ?? 0) - (before?.y ?? 0))).toBeGreaterThan(2);
 });
 
 test('keeps the Sun anchored while Along the Path advances', async ({ page }) => {

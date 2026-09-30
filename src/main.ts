@@ -250,6 +250,7 @@ function animate(now: number): void {
         rotationStabilized: state.speed === 'year' || state.speed === 'decade',
         trailRevision: state.trailRevision,
         journeyProgress: (state.currentTimeMs - state.startTimeMs) / (state.endTimeMs - state.startTimeMs),
+        galacticProgress: state.galacticElapsedMillionYears / state.galacticEndMillionYears,
       },
       now,
     );
