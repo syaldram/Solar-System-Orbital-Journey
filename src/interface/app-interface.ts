@@ -1,12 +1,17 @@
-import type { PlanetProfile } from '../astronomy/planet-data';
+import { getPlanetProfile, type PlanetProfile } from '../astronomy/planet-data';
+import type { PlanetId } from '../astronomy/solar-system';
 import { GALACTIC_MODEL } from '../astronomy/reference-frames';
 import type {
+  AlongPathMotion,
   ExperienceAction,
   ExperienceState,
+  GalacticPlaybackSpeed,
   SelectableBody,
   ViewMode,
   ViewOptions,
 } from '../experience/experience-state';
+import { GALACTIC_PLAYBACK_SPEEDS, getGalacticOrbitPresentation } from '../experience/experience-state';
+import { QUALITY_CORONA_DETAIL, resolveQualityTier } from '../experience/quality';
 import { TOUR_CHAPTERS } from '../experience/tour';
 
 export interface PlanetCardDetails {
@@ -20,7 +25,7 @@ export interface AppInterfaceOptions {
   readonly onEnter: (mode: 'tour' | 'free') => void;
   readonly onShare: () => void;
   readonly onFocus: (body: SelectableBody) => void;
-  readonly onFollow: (body: SelectableBody) => void;
+  readonly onFollow: (planet: PlanetId) => void;
   readonly onResetCamera: () => void;
   readonly onReturnHome: () => void;
 }
@@ -49,13 +54,13 @@ const EXPLANATIONS: Readonly<Record<ViewMode, { title: string; html: string; sta
     title: 'Travel with Sun',
     status: 'Body ratios preserved · orbital distances proportional',
     html: `<p>The camera travels with the Sun, so it appears fixed while each planet follows its calculated Keplerian orbit.</p>
-      <ul><li>Orbital distances and eccentricities remain proportional.</li><li>The Sun and planets preserve their physical radius ratios; hollow markers reveal unresolved bodies.</li><li>The pale plane is the <em>ecliptic</em>: Earth’s orbital plane used as a Solar-System reference.</li></ul>`,
+      <ul><li>Orbital distances and eccentricities remain proportional.</li><li>The Sun and planets preserve their physical radius ratios; hollow markers reveal unresolved bodies.</li><li>The Sun's granular surface, layered corona filaments, and subtle breathing glow are procedural presentation effects, not modeled solar weather. Decorative motion evolves in real presentation time, independently of simulation speed, and freezes with reduced motion.</li><li>Visual quality may simplify corona detail without changing the Sun's enhanced body size, lighting, or calculated motion.</li><li>The pale plane is the <em>ecliptic</em>: Earth’s orbital plane used as a Solar-System reference.</li></ul>`,
   },
   space: {
     title: 'Watch from Space',
     status: 'Rolling local window · straight tangent approximation',
-    html: `<p>This is a rolling window in a local galactic coordinate frame. Along the Path keeps the Sun stable while the abstract grid flows backward smoothly.</p>
-      <ul><li>The Sun moves at an adopted ${GALACTIC_MODEL.localSpeed.value} km/s.</li><li>Across 165 years it travels about ${GALACTIC_MODEL.fullJourneyDistance.value.toLocaleString('en')} AU.</li><li>Full Journey preserves the real transverse scale and omits misleading century-long planet trails.</li><li>The true galactic path curves too little to detect here, so this segment is rendered as a straight local tangent.</li></ul>`,
+    html: `<p>This is a rolling window in a local galactic coordinate frame. Along the Path keeps the Sun stable while continuous coordinate guides, distance ticks, and sparse abstract depth markers move backward.</p>
+      <ul><li>The Sun moves at an adopted ${GALACTIC_MODEL.localSpeed.value} km/s, and the numerical distance stays derived from simulated UTC time.</li><li>Across 165 years it travels about ${GALACTIC_MODEL.fullJourneyDistance.value.toLocaleString('en')} AU.</li><li>At high playback speeds, only the apparent guide flow is capped and its density adjusted to prevent strobing; simulated time, distance, and the Full Journey position remain accurate.</li><li>Reduced motion uses subdued stepped guide updates. The markers are abstract orientation cues, not a nearby-star catalog, stellar wake, or physical trail.</li><li>Full Journey preserves the real transverse scale and omits misleading century-long planet trails.</li><li>The true galactic path curves too little to detect here, so this segment is rendered as a straight local tangent.</li></ul>`,
   },
   galaxy: {
     title: 'Galaxy Overview',
@@ -75,10 +80,13 @@ export class AppInterface {
   private readonly completion = element<HTMLElement>('journey-complete');
   private readonly sourcesDialog = element<HTMLDialogElement>('sources-dialog');
   private readonly timeline = element<HTMLInputElement>('timeline-range');
+  private readonly speedSelect = element<HTMLSelectElement>('speed-select');
   private readonly toast = element<HTMLElement>('toast');
   private selectedBody: SelectableBody | null = null;
   private toastTimer = 0;
   private entered = false;
+  private currentFrame: ViewMode = 'sun';
+  private renderedTimelineFrame: ViewMode | null = null;
 
   constructor(private readonly options: AppInterfaceOptions) {
     element<HTMLButtonElement>('begin-journey').addEventListener('click', () => this.enter('tour'));
@@ -119,20 +127,34 @@ export class AppInterface {
     });
 
     element<HTMLButtonElement>('play-toggle').addEventListener('click', () => this.togglePlayback());
-    element<HTMLSelectElement>('speed-select').addEventListener('change', (event) => {
-      const speed = (event.currentTarget as HTMLSelectElement).value as ExperienceState['speed'];
+    this.speedSelect.addEventListener('change', () => {
+      if (this.currentFrame === 'galaxy') {
+        const speed = GALACTIC_PLAYBACK_SPEEDS.find((candidate) => candidate === Number(this.speedSelect.value));
+        if (speed !== undefined) this.options.dispatch({ type: 'set-galactic-speed', speed });
+        return;
+      }
+      const speed = this.speedSelect.value as ExperienceState['speed'];
       this.options.dispatch({ type: 'set-speed', speed });
     });
     this.timeline.addEventListener('input', () => {
+      if (this.currentFrame === 'galaxy') {
+        this.options.dispatch({ type: 'scrub-galactic', elapsedMillionYears: Number(this.timeline.value) });
+        return;
+      }
       const start = Number(this.timeline.dataset.start);
       const end = Number(this.timeline.dataset.end);
       const progress = Number(this.timeline.value) / Number(this.timeline.max);
       this.options.dispatch({ type: 'scrub', timeMs: start + (end - start) * progress });
     });
     element<HTMLButtonElement>('today-button').addEventListener('click', () => {
-      this.options.dispatch({ type: 'return-today', today: new Date() });
+      this.options.dispatch(this.currentFrame === 'galaxy'
+        ? { type: 'return-present' }
+        : { type: 'return-today', today: new Date() });
     });
     element<HTMLButtonElement>('share-button').addEventListener('click', options.onShare);
+    element<HTMLButtonElement>('replay-journey').addEventListener('click', () => {
+      this.options.dispatch({ type: 'replay' });
+    });
     element<HTMLButtonElement>('tour-next').addEventListener('click', () => this.options.dispatch({ type: 'next-chapter' }));
     element<HTMLButtonElement>('tour-skip').addEventListener('click', () => this.options.dispatch({ type: 'skip-tour' }));
     element<HTMLButtonElement>('close-planet').addEventListener('click', () => this.options.dispatch({ type: 'select', body: null }));
@@ -140,13 +162,14 @@ export class AppInterface {
       if (this.selectedBody) options.onFocus(this.selectedBody);
     });
     element<HTMLButtonElement>('follow-planet').addEventListener('click', () => {
-      if (this.selectedBody) options.onFollow(this.selectedBody);
+      if (this.selectedBody && this.selectedBody !== 'sun') options.onFollow(this.selectedBody);
     });
     element<HTMLButtonElement>('reset-camera').addEventListener('click', options.onResetCamera);
-    element<HTMLButtonElement>('replay-button').addEventListener('click', () => this.options.dispatch({ type: 'replay' }));
+    element<HTMLButtonElement>('replay-button').addEventListener('click', () => {
+      this.options.dispatch(this.currentFrame === 'galaxy' ? { type: 'replay-galactic' } : { type: 'replay-solar' });
+    });
     element<HTMLButtonElement>('continue-button').addEventListener('click', () => {
-      this.completion.hidden = true;
-      this.options.dispatch({ type: 'pause' });
+      this.options.dispatch({ type: 'dismiss-completion' });
     });
 
     element<HTMLButtonElement>('explain-button').addEventListener('click', () => this.togglePanel(this.explainPanel));
@@ -183,21 +206,96 @@ export class AppInterface {
     });
   }
 
-  render(state: ExperienceState): void {
-    this.timeline.dataset.start = String(state.startTimeMs);
-    this.timeline.dataset.end = String(state.endTimeMs);
-    this.timeline.value = String(
-      Math.round(((state.currentTimeMs - state.startTimeMs) / (state.endTimeMs - state.startTimeMs)) * Number(this.timeline.max)),
-    );
-    element<HTMLElement>('current-date').textContent = formatDate(state.currentTimeMs);
+  render(state: ExperienceState, pathMotion: AlongPathMotion): void {
+    this.currentFrame = state.frame;
+    const isGalaxy = state.frame === 'galaxy';
+    this.renderTimelineOptions(state.frame);
+    if (isGalaxy) {
+      this.timeline.min = '0';
+      this.timeline.max = String(state.galacticEndMillionYears);
+      this.timeline.step = '1';
+      this.timeline.value = String(Math.round(state.galacticElapsedMillionYears));
+      element<HTMLElement>('timeline-heading').textContent = 'Galactic elapsed time';
+      element<HTMLElement>('current-date').textContent = `${Math.round(state.galacticElapsedMillionYears)} million years`;
+      element<HTMLElement>('timeline-range-label').textContent = 'Galactic elapsed time through one schematic orbit';
+      element<HTMLElement>('timeline-start').textContent = 'Present';
+      element<HTMLElement>('timeline-end').textContent = `Approximately ${state.galacticEndMillionYears} million years`;
+      this.speedSelect.value = String(state.galacticSpeed);
+      element<HTMLButtonElement>('today-button').textContent = 'Return to Present';
+    } else {
+      this.timeline.min = '0';
+      this.timeline.max = '10000';
+      this.timeline.step = '1';
+      this.timeline.dataset.start = String(state.startTimeMs);
+      this.timeline.dataset.end = String(state.endTimeMs);
+      this.timeline.value = String(
+        Math.round(((state.currentTimeMs - state.startTimeMs) / (state.endTimeMs - state.startTimeMs)) * Number(this.timeline.max)),
+      );
+      element<HTMLElement>('timeline-heading').textContent = 'Simulated date · UTC';
+      element<HTMLElement>('current-date').textContent = formatDate(state.currentTimeMs);
+      element<HTMLElement>('timeline-range-label').textContent = 'Simulated date across 165 years';
+      element<HTMLElement>('timeline-start').textContent = 'Today';
+      element<HTMLElement>('timeline-end').textContent = '+165 years';
+      this.speedSelect.value = state.speed;
+      element<HTMLButtonElement>('today-button').textContent = 'Return to Today';
+    }
     const play = element<HTMLButtonElement>('play-toggle');
     play.setAttribute('aria-pressed', String(state.isPlaying));
-    play.setAttribute('aria-label', state.isPlaying ? 'Pause simulation' : 'Play simulation');
+    const activeJourneyComplete = isGalaxy ? state.galacticJourneyComplete : state.journeyComplete;
+    play.disabled = activeJourneyComplete;
+    const playLabel = isGalaxy
+      ? state.galacticJourneyComplete
+        ? 'Galactic Orbit Complete'
+        : state.isPlaying
+        ? 'Pause Galactic Orbit'
+        : state.galacticElapsedMillionYears > 0
+          ? 'Resume Galactic Orbit'
+          : 'Play Galactic Orbit'
+      : state.journeyComplete
+        ? 'Simulation Complete'
+        : state.isPlaying ? 'Pause simulation' : 'Play simulation';
+    play.setAttribute('aria-label', playLabel);
     const playIcon = play.firstElementChild;
     if (playIcon) playIcon.textContent = state.isPlaying ? 'Ⅱ' : '▶';
-    element<HTMLSelectElement>('speed-select').value = state.speed;
     element<HTMLSelectElement>('quality-select').value = state.quality;
     element<HTMLInputElement>('reduced-motion').checked = state.reducedMotion;
+
+    const galacticStatus = element<HTMLElement>('galactic-orbit-status');
+    galacticStatus.hidden = !isGalaxy;
+    const galacticPresentation = getGalacticOrbitPresentation(state);
+    const galacticPhase = element<HTMLElement>('galactic-orbit-phase');
+    galacticPhase.textContent = galacticPresentation.phase === 'present'
+      ? 'At present-location anchor'
+      : galacticPresentation.phase === 'complete'
+        ? 'Present anchor reached after one complete orbit'
+        : 'Schematic orbit in progress';
+    const galacticProgress = element<HTMLElement>('galactic-orbit-progress');
+    galacticProgress.setAttribute('aria-valuenow', String(galacticPresentation.progressPercent));
+    galacticProgress.setAttribute(
+      'aria-valuetext',
+      `${galacticPresentation.progressPercent}% of the schematic orbit completed`,
+    );
+    element<HTMLElement>('galactic-orbit-progress-fill').style.width = `${galacticPresentation.progressPercent}%`;
+    element<HTMLElement>('galactic-motion-treatment').textContent = state.reducedMotion
+      ? 'Decorative corona motion frozen; marker movement remains user-controlled.'
+      : 'Restrained corona motion uses presentation time, independent of orbit speed.';
+
+    const pathMotionPanel = element<HTMLElement>('path-motion');
+    pathMotionPanel.hidden = state.frame !== 'space' || state.cameraBookmark !== 'path';
+    pathMotionPanel.dataset.guideFlow = pathMotion.guideFlow;
+    element<HTMLElement>('path-distance-au').textContent = `${formatNumber(
+      pathMotion.distanceAu,
+      pathMotion.distanceAu < 1 ? 2 : pathMotion.distanceAu < 100 ? 1 : 0,
+    )} AU`;
+    element<HTMLElement>('path-distance-light-years').textContent = `${formatNumber(
+      pathMotion.distanceLightYears,
+      3,
+    )} light-years`;
+    element<HTMLElement>('path-guide-status').textContent = pathMotion.guideFlow === 'stepped'
+      ? 'Subdued stepped guide updates'
+      : pathMotion.guideFlow === 'stabilized'
+        ? 'Guide flow visually stabilized'
+        : 'Continuous coordinate guides';
 
     document.querySelectorAll<HTMLButtonElement>('[data-frame]').forEach((button) => {
       button.setAttribute('aria-pressed', String(button.dataset.frame === state.frame));
@@ -217,13 +315,37 @@ export class AppInterface {
       ? 'Full 165-year path · current calculated positions'
       : explanation.status;
     element<HTMLElement>('scene-status').innerHTML = `<span class="scene-status__dot" aria-hidden="true"></span><div><strong>${explanation.title}</strong><small>${status}${rotationNote}</small></div>`;
+    const solarPresentation = element<HTMLElement>('solar-presentation-status');
+    solarPresentation.hidden = isGalaxy;
+    const solarMotionStatus = state.reducedMotion
+      ? 'Decorative solar motion frozen for reduced motion.'
+      : 'Decorative solar motion active.';
+    const coronaDetail = QUALITY_CORONA_DETAIL[resolveQualityTier(state.quality)];
+    solarPresentation.textContent = `${solarMotionStatus} Driven by real presentation time; playback speed independent. Layered corona detail: ${coronaDetail}.`;
     element<HTMLElement>('explain-title').textContent = explanation.title;
     element<HTMLElement>('explain-copy').innerHTML = explanation.html;
 
     this.selectedBody = state.selectedBody;
     this.planetCard.hidden = state.selectedBody === null || state.selectedBody === 'sun';
+    const follow = element<HTMLButtonElement>('follow-planet');
+    const isFollowing = state.followedPlanet !== null && state.followedPlanet === state.selectedBody;
+    follow.setAttribute('aria-pressed', String(isFollowing));
+    follow.textContent = isFollowing && state.followedPlanet
+      ? `Stop Following ${getPlanetProfile(state.followedPlanet).name}`
+      : 'Follow Planet';
     this.renderTour(state);
-    this.completion.hidden = !state.journeyComplete;
+    element<HTMLButtonElement>('replay-journey').hidden = state.tour.status !== 'complete';
+    const journeyComplete = isGalaxy ? state.galacticJourneyComplete : state.journeyComplete;
+    const completionDismissed = isGalaxy
+      ? state.galacticCompletionDismissed
+      : state.journeyCompletionDismissed;
+    this.completion.hidden = !journeyComplete || completionDismissed;
+    element<HTMLElement>('completion-kicker').textContent = isGalaxy ? 'Approximately 230 million years elapsed' : '165 Earth years later';
+    element<HTMLElement>('completion-title').textContent = isGalaxy ? 'Schematic orbit complete' : 'Journey complete';
+    element<HTMLElement>('completion-copy').textContent = isGalaxy
+      ? 'The schematic Sun marker has completed one approximate orbit of the Milky Way.'
+      : 'Neptune has completed one orbit. The Solar System has traveled about 0.12 light-years along its local galactic path.';
+    element<HTMLButtonElement>('replay-button').textContent = isGalaxy ? 'Replay from Present' : 'Replay from Today';
   }
 
   openSimulation(): void {
@@ -276,6 +398,29 @@ export class AppInterface {
   private togglePlayback(): void {
     const pressed = element<HTMLButtonElement>('play-toggle').getAttribute('aria-pressed') === 'true';
     this.options.dispatch({ type: pressed ? 'pause' : 'play' });
+  }
+
+  private renderTimelineOptions(frame: ViewMode): void {
+    const timelineFrame: ViewMode = frame === 'galaxy' ? 'galaxy' : 'sun';
+    if (this.renderedTimelineFrame === timelineFrame) return;
+    this.renderedTimelineFrame = timelineFrame;
+    const options: readonly { value: string; label: string }[] = timelineFrame === 'galaxy'
+      ? GALACTIC_PLAYBACK_SPEEDS.map((speed: GalacticPlaybackSpeed) => ({
+          value: String(speed),
+          label: `${speed} million years/s`,
+        }))
+      : [
+          { value: 'day', label: '1 day/s' },
+          { value: 'month', label: '1 month/s' },
+          { value: 'year', label: '1 year/s' },
+          { value: 'decade', label: '10 years/s' },
+        ];
+    this.speedSelect.replaceChildren(...options.map(({ value, label }) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      return option;
+    }));
   }
 
   private togglePanel(panel: HTMLElement): void {

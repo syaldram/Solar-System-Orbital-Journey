@@ -55,6 +55,7 @@
           </nav>
 
           <div class="topbar__actions">
+            <button id="replay-journey" class="icon-button icon-button--text" type="button" hidden>Replay Journey</button>
             <button id="explain-button" class="icon-button icon-button--text" type="button">Explain this view</button>
             <button id="options-button" class="icon-button" type="button" aria-label="View options" aria-expanded="false">⋯</button>
           </div>
@@ -64,6 +65,32 @@
           <span class="scene-status__dot" aria-hidden="true"></span>
           <div><strong>Travel with Sun</strong><small>Body ratios preserved · orbital distances proportional</small></div>
         </div>
+        <div id="solar-presentation-status" class="sr-only" role="note" aria-label="Solar presentation"></div>
+
+        <section id="path-motion" class="path-motion" aria-label="Along the Path motion" hidden>
+          <small>Distance traveled</small>
+          <strong id="path-distance-au">0 AU</strong>
+          <span id="path-distance-light-years">0 light-years</span>
+          <p id="path-guide-status">Continuous coordinate guides</p>
+        </section>
+
+        <section id="galactic-orbit-status" class="galactic-orbit-status" aria-label="Galactic orbit status" hidden>
+          <small>Schematic Sun orbit</small>
+          <strong id="galactic-orbit-phase">At present-location anchor</strong>
+          <div
+            id="galactic-orbit-progress"
+            class="galactic-orbit-status__progress"
+            role="progressbar"
+            aria-label="Completed schematic orbit"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-valuetext="0% of the schematic orbit completed"
+          ><span id="galactic-orbit-progress-fill"></span></div>
+          <p>Direction arrow follows the forward tangent.</p>
+          <p>Highlighted arc shows completed progress, not a physical trail.</p>
+          <p id="galactic-motion-treatment">Restrained corona motion uses presentation time, independent of orbit speed.</p>
+        </section>
 
         <aside id="tour-panel" class="tour-panel" hidden aria-labelledby="tour-title">
           <div class="tour-panel__progress"><span id="tour-progress"></span></div>
@@ -97,7 +124,7 @@
           </details>
           <div class="planet-card__actions">
             <button id="focus-planet" class="button button--secondary button--small" type="button">Focus Camera</button>
-            <button id="follow-planet" class="text-button" type="button">Follow Planet</button>
+            <button id="follow-planet" class="text-button" type="button" aria-pressed="false">Follow Planet</button>
           </div>
         </aside>
 
@@ -138,11 +165,11 @@
 
         <section id="timeline-controls" class="timeline" aria-label="Simulation timeline">
           <button id="play-toggle" class="play-button" type="button" aria-label="Play simulation" aria-pressed="false"><span aria-hidden="true">▶</span></button>
-          <div class="timeline__date"><small>Simulated date · UTC</small><strong id="current-date"></strong></div>
+          <div class="timeline__date"><small id="timeline-heading">Simulated date · UTC</small><strong id="current-date"></strong></div>
           <div class="timeline__scrubber">
-            <label class="sr-only" for="timeline-range">Simulated date across 165 years</label>
+            <label id="timeline-range-label" class="sr-only" for="timeline-range">Simulated date across 165 years</label>
             <input id="timeline-range" type="range" min="0" max="10000" value="0" />
-            <div><span>Today</span><span>+165 years</span></div>
+            <div><span id="timeline-start">Today</span><span id="timeline-end">+165 years</span></div>
           </div>
           <div class="speed-control">
             <label for="speed-select">Speed</label>
@@ -158,9 +185,9 @@
         </section>
 
         <section id="journey-complete" class="completion" hidden aria-labelledby="completion-title">
-          <p class="eyebrow">165 Earth years later</p>
+          <p id="completion-kicker" class="eyebrow">165 Earth years later</p>
           <h2 id="completion-title">Journey complete</h2>
-          <p>Neptune has completed one orbit. The Solar System has traveled about 0.12 light-years along its local galactic path.</p>
+          <p id="completion-copy">Neptune has completed one orbit. The Solar System has traveled about 0.12 light-years along its local galactic path.</p>
           <div class="completion__actions">
             <button id="replay-button" class="button button--primary" type="button">Replay from Today</button>
             <button id="continue-button" class="button button--ghost" type="button">Continue Exploring</button>

@@ -31,3 +31,11 @@ _Avoid_: Planet sprite, display-size planet
 **Galaxy Overview**:
 A schematic Milky Way orientation view with a diffuse disk, central bar, dust lanes, and soft spiral structure rather than a star-by-star map.
 _Avoid_: Milky Way photograph, galaxy map
+
+**Planet follow**:
+A temporary camera mode tied to the planet whose information card is open. It ends when that card closes or another planet is selected.
+_Avoid_: Body tracking, locked camera
+
+**Galactic elapsed time**:
+The interval from the present used to animate the Sun along the schematic orbit in Galaxy Overview. It is separate from the simulated UTC date used to calculate planetary positions.
+_Avoid_: Galactic simulated date, future UTC date
