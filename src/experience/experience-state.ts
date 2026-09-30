@@ -55,6 +55,12 @@ export interface AlongPathMotion {
   readonly isPlaying: boolean;
 }
 
+export interface GalacticOrbitPresentation {
+  readonly progress: number;
+  readonly progressPercent: number;
+  readonly phase: 'present' | 'in-progress' | 'complete';
+}
+
 export type ExperienceAction =
   | { readonly type: 'play' }
   | { readonly type: 'pause' }
@@ -120,6 +126,22 @@ export function getAlongPathMotion(state: ExperienceState): AlongPathMotion {
     calculatedGuideAuPerSecond,
     apparentGuideAuPerSecond,
     isPlaying: state.isPlaying,
+  };
+}
+
+export function getGalacticOrbitPresentation(state: ExperienceState): GalacticOrbitPresentation {
+  const progress = Math.min(
+    1,
+    Math.max(0, state.galacticElapsedMillionYears / state.galacticEndMillionYears),
+  );
+  return {
+    progress,
+    progressPercent: Math.round(progress * 100),
+    phase: progress >= 1 || state.galacticJourneyComplete
+      ? 'complete'
+      : progress === 0
+        ? 'present'
+        : 'in-progress',
   };
 }
 

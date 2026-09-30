@@ -223,6 +223,37 @@ test('omits Galactic progress from sharing and resets it on reload', async ({ pa
   await expect(page.getByRole('button', { name: 'Play Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
 });
 
+test('explains Galactic orbit phase, direction, and completed progress semantically', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Explore Freely' }).click();
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+
+  const status = page.getByRole('region', { name: 'Galactic orbit status' });
+  const progress = status.getByRole('progressbar', { name: 'Completed schematic orbit' });
+  const sunMarker = page.getByRole('button', { name: 'Select Sun' });
+  await page.waitForTimeout(900);
+  const presentAnchor = await sunMarker.boundingBox();
+  await expect(status.getByText('At present-location anchor', { exact: true })).toBeVisible();
+  await expect(status.getByText('Direction arrow follows the forward tangent.')).toBeVisible();
+  await expect(status.getByText('Highlighted arc shows completed progress, not a physical trail.')).toBeVisible();
+  await expect(progress).toHaveAttribute('aria-valuenow', '0');
+  await expect(progress).toHaveAttribute('aria-valuetext', '0% of the schematic orbit completed');
+
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('115');
+  await expect(status.getByText('Schematic orbit in progress', { exact: true })).toBeVisible();
+  await expect(progress).toHaveAttribute('aria-valuenow', '50');
+
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('230');
+  await expect(status.getByText('Present anchor reached after one complete orbit', { exact: true })).toBeVisible();
+  await expect(progress).toHaveAttribute('aria-valuenow', '100');
+  await page.waitForTimeout(100);
+  const completedAnchor = await sunMarker.boundingBox();
+  expect(presentAnchor).not.toBeNull();
+  expect(completedAnchor).not.toBeNull();
+  expect(Math.abs((completedAnchor?.x ?? 0) - (presentAnchor?.x ?? 0))).toBeLessThan(1);
+  expect(Math.abs((completedAnchor?.y ?? 0) - (presentAnchor?.y ?? 0))).toBeLessThan(1);
+});
+
 test('moves the schematic Sun marker when Galactic elapsed time plays', async ({ page }) => {
   await page.goto('./');
   await page.getByRole('button', { name: 'Explore Freely' }).click();
@@ -231,15 +262,89 @@ test('moves the schematic Sun marker when Galactic elapsed time plays', async ({
   await page.waitForTimeout(900);
 
   const sunMarker = page.getByRole('button', { name: 'Select Sun' });
+  const galacticCenter = page.getByText('Galactic center', { exact: true });
   const before = await sunMarker.boundingBox();
+  const centerBefore = await galacticCenter.boundingBox();
   await page.getByRole('button', { name: 'Play Galactic Orbit' }).click();
   await page.waitForTimeout(650);
   await page.getByRole('button', { name: 'Pause Galactic Orbit' }).click();
   const after = await sunMarker.boundingBox();
+  const centerAfter = await galacticCenter.boundingBox();
 
   expect(before).not.toBeNull();
   expect(after).not.toBeNull();
+  expect(centerBefore).not.toBeNull();
+  expect(centerAfter).not.toBeNull();
   expect(Math.hypot((after?.x ?? 0) - (before?.x ?? 0), (after?.y ?? 0) - (before?.y ?? 0))).toBeGreaterThan(2);
+  expect(Math.abs((centerAfter?.x ?? 0) - (centerBefore?.x ?? 0))).toBeLessThan(1);
+  expect(Math.abs((centerAfter?.y ?? 0) - (centerBefore?.y ?? 0))).toBeLessThan(1);
+
+  const canvas = await page.locator('canvas').boundingBox();
+  expect(canvas).not.toBeNull();
+  if (canvas) {
+    await page.mouse.move(canvas.x + canvas.width * 0.42, canvas.y + canvas.height * 0.42);
+    await page.mouse.down();
+    await page.mouse.move(canvas.x + canvas.width * 0.52, canvas.y + canvas.height * 0.42, { steps: 6 });
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(350);
+  const afterManualOrbit = await sunMarker.boundingBox();
+  expect(afterManualOrbit).not.toBeNull();
+  expect(Math.hypot(
+    (afterManualOrbit?.x ?? 0) - (after?.x ?? 0),
+    (afterManualOrbit?.y ?? 0) - (after?.y ?? 0),
+  )).toBeGreaterThan(2);
+});
+
+test('keeps Galactic marker playback available while reduced motion freezes decoration', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Explore Freely' }).click();
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+
+  const status = page.getByRole('region', { name: 'Galactic orbit status' });
+  await expect(status.getByText('Decorative corona motion frozen; marker movement remains user-controlled.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
+  const sunMarker = page.getByRole('button', { name: 'Select Sun' });
+  await page.waitForTimeout(900);
+  const before = await sunMarker.boundingBox();
+  await page.waitForTimeout(450);
+  const whilePaused = await sunMarker.boundingBox();
+  expect(before).not.toBeNull();
+  expect(whilePaused).not.toBeNull();
+  expect(Math.abs((whilePaused?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(1);
+  expect(Math.abs((whilePaused?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(1);
+
+  await page.getByRole('button', { name: 'Play Galactic Orbit' }).click();
+  await page.waitForTimeout(650);
+  await page.getByRole('button', { name: 'Pause Galactic Orbit' }).click();
+  const after = await sunMarker.boundingBox();
+  expect(Math.hypot((after?.x ?? 0) - (before?.x ?? 0), (after?.y ?? 0) - (before?.y ?? 0))).toBeGreaterThan(2);
+});
+
+test('keeps Galactic time and marker position accurate when visual quality is reduced', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Explore Freely' }).click();
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('58');
+  await page.waitForTimeout(900);
+
+  const sunMarker = page.getByRole('button', { name: 'Select Sun' });
+  const before = await sunMarker.boundingBox();
+  const progress = page.getByRole('progressbar', { name: 'Completed schematic orbit' });
+  await expect(progress).toHaveAttribute('aria-valuenow', '25');
+
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Visual quality').selectOption('low');
+  await page.getByRole('button', { name: 'Close options' }).click();
+  const after = await sunMarker.boundingBox();
+
+  await expect(page.getByText('58 million years', { exact: true })).toBeVisible();
+  await expect(progress).toHaveAttribute('aria-valuenow', '25');
+  expect(before).not.toBeNull();
+  expect(after).not.toBeNull();
+  expect(Math.abs((after?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(1);
+  expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(1);
 });
 
 test('shows Galactic completion when playback reaches one orbit', async ({ page }) => {

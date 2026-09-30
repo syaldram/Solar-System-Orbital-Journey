@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createInitialExperienceState,
   getAlongPathMotion,
+  getGalacticOrbitPresentation,
   updateExperience,
 } from './experience-state';
 import { applyCurrentTourChapter } from './tour';
@@ -26,6 +27,31 @@ describe('experience state', () => {
     expect(state.galacticEndMillionYears).toBe(230);
     expect(state.galacticSpeed).toBe(5);
     expect(state.galacticJourneyComplete).toBe(false);
+  });
+
+  it('distinguishes the present anchor from a completed orbit at the same marker position', () => {
+    let state = createInitialExperienceState(TODAY);
+
+    expect(getGalacticOrbitPresentation(state)).toEqual({
+      progress: 0,
+      progressPercent: 0,
+      phase: 'present',
+    });
+
+    state = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
+    state = updateExperience(state, { type: 'scrub-galactic', elapsedMillionYears: 115 });
+    expect(getGalacticOrbitPresentation(state)).toEqual({
+      progress: 0.5,
+      progressPercent: 50,
+      phase: 'in-progress',
+    });
+
+    state = updateExperience(state, { type: 'scrub-galactic', elapsedMillionYears: 230 });
+    expect(getGalacticOrbitPresentation(state)).toEqual({
+      progress: 1,
+      progressPercent: 100,
+      phase: 'complete',
+    });
   });
 
   it('advances at the named rate and stops instead of looping at the endpoint', () => {

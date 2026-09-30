@@ -73,6 +73,24 @@
           <p id="path-guide-status">Continuous coordinate guides</p>
         </section>
 
+        <section id="galactic-orbit-status" class="galactic-orbit-status" aria-label="Galactic orbit status" hidden>
+          <small>Schematic Sun orbit</small>
+          <strong id="galactic-orbit-phase">At present-location anchor</strong>
+          <div
+            id="galactic-orbit-progress"
+            class="galactic-orbit-status__progress"
+            role="progressbar"
+            aria-label="Completed schematic orbit"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-valuetext="0% of the schematic orbit completed"
+          ><span id="galactic-orbit-progress-fill"></span></div>
+          <p>Direction arrow follows the forward tangent.</p>
+          <p>Highlighted arc shows completed progress, not a physical trail.</p>
+          <p id="galactic-motion-treatment">Restrained corona motion uses presentation time, independent of orbit speed.</p>
+        </section>
+
         <aside id="tour-panel" class="tour-panel" hidden aria-labelledby="tour-title">
           <div class="tour-panel__progress"><span id="tour-progress"></span></div>
           <p id="tour-kicker" class="eyebrow">Chapter 1 of 5</p>

@@ -100,13 +100,16 @@ export class OrbitalScene {
   private readonly localPath: THREE.Line;
   private readonly fullJourneyPath: THREE.Line;
   private readonly galaxySunMarker: THREE.Mesh;
+  private readonly galaxySunCorona: THREE.Sprite;
   private readonly galaxyDirectionArrow: THREE.ArrowHelper;
+  private readonly galaxyOrbitProgress: THREE.Line;
   private readonly starField: THREE.Points;
   private readonly galaxyStars: THREE.Points;
   private readonly galaxyDiskMaterials: readonly THREE.MeshBasicMaterial[];
   private readonly earthClouds: THREE.Mesh | null;
   private readonly ringMaterials: readonly THREE.MeshStandardMaterial[];
   private readonly solarSystemLabel: HTMLDivElement;
+  private readonly galaxyCenterLabel: HTMLDivElement;
   private readonly pathTickLabels: readonly HTMLDivElement[];
   private readonly pathTickPositions: THREE.Vector3[] = [];
   private readonly labelLayer: HTMLElement;
@@ -142,6 +145,7 @@ export class OrbitalScene {
   private hoveredBody: SelectableBody | null = null;
   private sunSurfaceTime = 0;
   private lastSunAnimationAt = performance.now();
+  private galaxyCoronaTime = 0;
   private displayedGuideDistanceAu: number | null = null;
   private previousGuideTargetAu: number | null = null;
   private lastGuideAnimationAt = performance.now();
@@ -260,7 +264,9 @@ export class OrbitalScene {
     const galaxy = this.createGalaxy();
     this.galaxyStars = galaxy.stars;
     this.galaxySunMarker = galaxy.sunMarker;
+    this.galaxySunCorona = galaxy.sunCorona;
     this.galaxyDirectionArrow = galaxy.directionArrow;
+    this.galaxyOrbitProgress = galaxy.orbitProgress;
     this.galaxyDiskMaterials = galaxy.diskMaterials;
     this.galaxyGroup.add(galaxy.root);
 
@@ -272,6 +278,12 @@ export class OrbitalScene {
     this.solarSystemLabel.setAttribute('role', 'note');
     this.solarSystemLabel.hidden = true;
     this.labelLayer.append(this.solarSystemLabel);
+    this.galaxyCenterLabel = document.createElement('div');
+    this.galaxyCenterLabel.className = 'galaxy-center-label';
+    this.galaxyCenterLabel.textContent = 'Galactic center';
+    this.galaxyCenterLabel.setAttribute('role', 'note');
+    this.galaxyCenterLabel.hidden = true;
+    this.labelLayer.append(this.galaxyCenterLabel);
     this.pathTickLabels = Array.from({ length: GUIDE_TICK_LABEL_COUNT }, () => {
       const label = document.createElement('div');
       label.className = 'path-distance-tick';
@@ -495,7 +507,9 @@ export class OrbitalScene {
     root: THREE.Group;
     stars: THREE.Points;
     sunMarker: THREE.Mesh;
+    sunCorona: THREE.Sprite;
     directionArrow: THREE.ArrowHelper;
+    orbitProgress: THREE.Line;
     diskMaterials: readonly THREE.MeshBasicMaterial[];
   } {
     const root = new THREE.Group();
@@ -551,27 +565,60 @@ export class OrbitalScene {
     );
     root.add(stars);
 
+    const orbitPoints = Array.from({ length: 361 }, (_, index) => {
+      const angle = (index / 360) * Math.PI * 2;
+      return new THREE.Vector3(Math.cos(angle) * 65, 0, Math.sin(angle) * 65);
+    });
     const orbit = new THREE.LineLoop(
-      new THREE.BufferGeometry().setFromPoints(
-        Array.from({ length: 181 }, (_, index) => {
-          const angle = (index / 180) * Math.PI * 2;
-          return new THREE.Vector3(Math.cos(angle) * 65, 0, Math.sin(angle) * 65);
-        }),
-      ),
+      new THREE.BufferGeometry().setFromPoints(orbitPoints),
       new THREE.LineDashedMaterial({ color: 0xf4b860, opacity: 0.32, transparent: true, dashSize: 2, gapSize: 1.7 }),
     );
     orbit.computeLineDistances();
     root.add(orbit);
 
+    const orbitProgress = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(orbitPoints),
+      new THREE.LineBasicMaterial({
+        color: 0xffcf7b,
+        opacity: 0.92,
+        transparent: true,
+        depthWrite: false,
+      }),
+    );
+    orbitProgress.geometry.setDrawRange(0, 0);
+    orbitProgress.visible = false;
+    root.add(orbitProgress);
+
     const sunMarker = new THREE.Mesh(
-      new THREE.SphereGeometry(1.2, 24, 12),
+      new THREE.SphereGeometry(1.05, 24, 12),
       new THREE.MeshBasicMaterial({ color: 0xffcf7b }),
     );
     sunMarker.position.set(65, 0, 0);
+    const coronaMaterial = new THREE.SpriteMaterial({
+      map: createGlowTexture(),
+      color: 0xffb55c,
+      opacity: 0.58,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const sunCorona = new THREE.Sprite(coronaMaterial);
+    sunCorona.scale.set(7, 7, 1);
+    sunCorona.userData.baseScale = 7;
+    sunCorona.userData.baseOpacity = 0.58;
+    sunMarker.add(sunCorona);
     root.add(sunMarker);
     const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(65, 0, 0), 8, 0xf4b860, 2.2, 1.2);
     root.add(arrow);
-    return { root, stars, sunMarker, directionArrow: arrow, diskMaterials: [primaryDiskMaterial, hazeMaterial] };
+    return {
+      root,
+      stars,
+      sunMarker,
+      sunCorona,
+      directionArrow: arrow,
+      orbitProgress,
+      diskMaterials: [primaryDiskMaterial, hazeMaterial],
+    };
   }
 
   private createBodyMarker(id: SelectableBody, text: string): void {
@@ -675,11 +722,14 @@ export class OrbitalScene {
     this.sunMesh.visible = !isGalaxy;
     this.sunGlow.visible = !isGalaxy;
     if (isGalaxy) {
-      const angle = state.galacticProgress * Math.PI * 2;
+      const progress = Math.min(1, Math.max(0, state.galacticProgress));
+      const angle = progress * Math.PI * 2;
       const markerPosition = new THREE.Vector3(Math.cos(angle) * 65, 0, Math.sin(angle) * 65);
       this.galaxySunMarker.position.copy(markerPosition);
       this.galaxyDirectionArrow.position.copy(markerPosition);
       this.galaxyDirectionArrow.setDirection(new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle)));
+      this.galaxyOrbitProgress.visible = progress > 0;
+      this.galaxyOrbitProgress.geometry.setDrawRange(0, Math.floor(progress * 360) + 1);
     }
     this.localGuides.position.set(0, 0, 0);
     if (isFullJourney) {
@@ -941,7 +991,7 @@ export class OrbitalScene {
         leader.hidden = true;
       }
       const localRadius = id === 'sun'
-        ? state.frame === 'galaxy' ? 1.2 : SUN_DISPLAY_RADIUS
+        ? state.frame === 'galaxy' ? 1.05 : SUN_DISPLAY_RADIUS
         : planetDisplayRadius(id);
       const worldScale = new THREE.Vector3();
       object.getWorldScale(worldScale);
@@ -972,6 +1022,19 @@ export class OrbitalScene {
       if (!behind) {
         this.solarSystemLabel.style.left = `${(solarSystemPosition.x * 0.5 + 0.5) * width}px`;
         this.solarSystemLabel.style.top = `${(-solarSystemPosition.y * 0.5 + 0.5) * height - 34}px`;
+      }
+    }
+
+    this.galaxyCenterLabel.hidden = state.frame !== 'galaxy';
+    if (state.frame === 'galaxy') {
+      const galacticCenter = new THREE.Vector3();
+      this.galaxyGroup.getWorldPosition(galacticCenter);
+      galacticCenter.project(this.camera);
+      const behind = galacticCenter.z < -1 || galacticCenter.z > 1;
+      this.galaxyCenterLabel.hidden = behind;
+      if (!behind) {
+        this.galaxyCenterLabel.style.left = `${(galacticCenter.x * 0.5 + 0.5) * width}px`;
+        this.galaxyCenterLabel.style.top = `${(-galacticCenter.y * 0.5 + 0.5) * height}px`;
       }
     }
 
@@ -1130,9 +1193,17 @@ export class OrbitalScene {
   private updateSunSurface(reducedMotion: boolean, nowMs: number): void {
     const elapsedSeconds = Math.min(0.05, Math.max(0, (nowMs - this.lastSunAnimationAt) / 1_000));
     this.lastSunAnimationAt = nowMs;
-    if (!reducedMotion) this.sunSurfaceTime += elapsedSeconds * 0.22;
+    if (!reducedMotion) {
+      this.sunSurfaceTime += elapsedSeconds * 0.22;
+      this.galaxyCoronaTime += elapsedSeconds * 0.45;
+    }
     const timeUniform = this.sunMaterial.uniforms.time;
     if (timeUniform) timeUniform.value = this.sunSurfaceTime;
+    const baseScale = typeof this.galaxySunCorona.userData.baseScale === 'number'
+      ? this.galaxySunCorona.userData.baseScale
+      : 7;
+    const pulse = reducedMotion ? 1 : 1 + Math.sin(this.galaxyCoronaTime) * 0.035;
+    this.galaxySunCorona.scale.set(baseScale * pulse, baseScale * pulse, 1);
   }
 
   private applyQuality(preference: QualityPreference, frame: ViewMode): void {
@@ -1157,6 +1228,12 @@ export class OrbitalScene {
     const [disk, haze] = this.galaxyDiskMaterials;
     if (disk) disk.opacity = quality === 'low' ? 0.78 : 0.92;
     if (haze) haze.opacity = quality === 'high' ? 0.22 : quality === 'balanced' ? 0.14 : 0.08;
+    const coronaMaterial = this.galaxySunCorona.material;
+    const coronaScale = quality === 'high' ? 7 : quality === 'balanced' ? 6 : 4.8;
+    const coronaOpacity = quality === 'high' ? 0.58 : quality === 'balanced' ? 0.42 : 0.26;
+    this.galaxySunCorona.userData.baseScale = coronaScale;
+    this.galaxySunCorona.userData.baseOpacity = coronaOpacity;
+    coronaMaterial.opacity = coronaOpacity;
   }
 
   private monitorPerformance(quality: QualityPreference, nowMs: number): void {
