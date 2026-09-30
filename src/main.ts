@@ -10,6 +10,7 @@ import {
 } from './astronomy/solar-system';
 import {
   createInitialExperienceState,
+  getAlongPathMotion,
   updateExperience,
   type ExperienceAction,
   type ExperienceState,
@@ -183,7 +184,7 @@ function dispatch(action: ExperienceAction): void {
 }
 
 function renderInterface(): void {
-  appInterface.render(state);
+  appInterface.render(state, getAlongPathMotion(state));
   if (state.selectedBody && state.selectedBody !== 'sun') {
     const instant = new Date(state.currentTimeMs);
     const snapshot = calculateSystemSnapshot(
@@ -267,6 +268,8 @@ function animate(now: number): void {
         rotationStabilized: state.speed === 'year' || state.speed === 'decade',
         trailRevision: state.trailRevision,
         journeyProgress: (state.currentTimeMs - state.startTimeMs) / (state.endTimeMs - state.startTimeMs),
+        pathMotion: getAlongPathMotion(state),
+        galacticProgress: state.galacticElapsedMillionYears / state.galacticEndMillionYears,
       },
       now,
     );

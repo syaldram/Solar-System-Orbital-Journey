@@ -65,6 +65,13 @@
           <div><strong>Travel with Sun</strong><small>Body ratios preserved · orbital distances proportional</small></div>
         </div>
 
+        <section id="path-motion" class="path-motion" aria-label="Along the Path motion" hidden>
+          <small>Distance traveled</small>
+          <strong id="path-distance-au">0 AU</strong>
+          <span id="path-distance-light-years">0 light-years</span>
+          <p id="path-guide-status">Continuous coordinate guides</p>
+        </section>
+
         <aside id="tour-panel" class="tour-panel" hidden aria-labelledby="tour-title">
           <div class="tour-panel__progress"><span id="tour-progress"></span></div>
           <p id="tour-kicker" class="eyebrow">Chapter 1 of 5</p>
@@ -138,11 +145,11 @@
 
         <section id="timeline-controls" class="timeline" aria-label="Simulation timeline">
           <button id="play-toggle" class="play-button" type="button" aria-label="Play simulation" aria-pressed="false"><span aria-hidden="true">▶</span></button>
-          <div class="timeline__date"><small>Simulated date · UTC</small><strong id="current-date"></strong></div>
+          <div class="timeline__date"><small id="timeline-heading">Simulated date · UTC</small><strong id="current-date"></strong></div>
           <div class="timeline__scrubber">
-            <label class="sr-only" for="timeline-range">Simulated date across 165 years</label>
+            <label id="timeline-range-label" class="sr-only" for="timeline-range">Simulated date across 165 years</label>
             <input id="timeline-range" type="range" min="0" max="10000" value="0" />
-            <div><span>Today</span><span>+165 years</span></div>
+            <div><span id="timeline-start">Today</span><span id="timeline-end">+165 years</span></div>
           </div>
           <div class="speed-control">
             <label for="speed-select">Speed</label>
@@ -158,9 +165,9 @@
         </section>
 
         <section id="journey-complete" class="completion" hidden aria-labelledby="completion-title">
-          <p class="eyebrow">165 Earth years later</p>
+          <p id="completion-kicker" class="eyebrow">165 Earth years later</p>
           <h2 id="completion-title">Journey complete</h2>
-          <p>Neptune has completed one orbit. The Solar System has traveled about 0.12 light-years along its local galactic path.</p>
+          <p id="completion-copy">Neptune has completed one orbit. The Solar System has traveled about 0.12 light-years along its local galactic path.</p>
           <div class="completion__actions">
             <button id="replay-button" class="button button--primary" type="button">Replay from Today</button>
             <button id="continue-button" class="button button--ghost" type="button">Continue Exploring</button>

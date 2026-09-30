@@ -1,7 +1,9 @@
 import type { PlanetId } from '../astronomy/solar-system';
+import { calculateLocalTravelDistance, GALACTIC_MODEL } from '../astronomy/reference-frames';
 
 export type ViewMode = 'sun' | 'space' | 'galaxy';
 export type PlaybackSpeed = 'day' | 'month' | 'year' | 'decade';
+export type GalacticPlaybackSpeed = 1 | 5 | 10 | 25;
 export type CameraBookmark = 'hero' | 'inner' | 'outer' | 'path' | 'ecliptic' | 'full';
 export type QualityPreference = 'auto' | 'high' | 'balanced' | 'low';
 export type SelectableBody = 'sun' | PlanetId;
@@ -24,6 +26,11 @@ export interface ExperienceState {
   readonly currentTimeMs: number;
   readonly isPlaying: boolean;
   readonly speed: PlaybackSpeed;
+  readonly galacticElapsedMillionYears: number;
+  readonly galacticEndMillionYears: number;
+  readonly galacticSpeed: GalacticPlaybackSpeed;
+  readonly galacticJourneyComplete: boolean;
+  readonly galacticCompletionDismissed: boolean;
   readonly frame: ViewMode;
   readonly selectedBody: SelectableBody | null;
   readonly followedPlanet: PlanetId | null;
@@ -37,13 +44,29 @@ export interface ExperienceState {
   readonly tour: TourState;
 }
 
+export type AlongPathGuideFlow = 'continuous' | 'stabilized' | 'stepped';
+
+export interface AlongPathMotion {
+  readonly distanceAu: number;
+  readonly distanceLightYears: number;
+  readonly guideFlow: AlongPathGuideFlow;
+  readonly calculatedGuideAuPerSecond: number;
+  readonly apparentGuideAuPerSecond: number;
+  readonly isPlaying: boolean;
+}
+
 export type ExperienceAction =
   | { readonly type: 'play' }
   | { readonly type: 'pause' }
   | { readonly type: 'advance'; readonly realSeconds: number }
   | { readonly type: 'set-speed'; readonly speed: PlaybackSpeed }
+  | { readonly type: 'set-galactic-speed'; readonly speed: GalacticPlaybackSpeed }
   | { readonly type: 'scrub'; readonly timeMs: number }
+  | { readonly type: 'scrub-galactic'; readonly elapsedMillionYears: number }
   | { readonly type: 'return-today'; readonly today: Date }
+  | { readonly type: 'return-present' }
+  | { readonly type: 'replay-galactic' }
+  | { readonly type: 'dismiss-completion' }
   | { readonly type: 'set-frame'; readonly frame: ViewMode }
   | { readonly type: 'select'; readonly body: SelectableBody | null }
   | { readonly type: 'toggle-planet-follow'; readonly planet: PlanetId }
@@ -62,6 +85,8 @@ export type ExperienceAction =
 const MILLISECONDS_PER_DAY = 86_400_000;
 const JOURNEY_DAYS = 165 * 365.25;
 const LAST_TOUR_CHAPTER = 4;
+const MAX_GUIDE_FLOW_AU_PER_SECOND = 12;
+const REDUCED_MOTION_GUIDE_FLOW_AU_PER_SECOND = 1.5;
 
 export const PLAYBACK_DAYS_PER_SECOND: Readonly<Record<PlaybackSpeed, number>> = {
   day: 1,
@@ -69,6 +94,36 @@ export const PLAYBACK_DAYS_PER_SECOND: Readonly<Record<PlaybackSpeed, number>> =
   year: 365.25,
   decade: 3_652.5,
 };
+
+export function getAlongPathMotion(state: ExperienceState): AlongPathMotion {
+  const distance = calculateLocalTravelDistance(
+    new Date(state.currentTimeMs),
+    new Date(state.startTimeMs),
+  );
+  const calculatedGuideAuPerSecond = calculateLocalTravelDistance(
+    new Date(PLAYBACK_DAYS_PER_SECOND[state.speed] * MILLISECONDS_PER_DAY),
+    new Date(0),
+  ).astronomicalUnits;
+  const apparentGuideAuPerSecond = Math.min(
+    calculatedGuideAuPerSecond,
+    state.reducedMotion ? REDUCED_MOTION_GUIDE_FLOW_AU_PER_SECOND : MAX_GUIDE_FLOW_AU_PER_SECOND,
+  );
+
+  return {
+    distanceAu: distance.astronomicalUnits,
+    distanceLightYears: distance.lightYears,
+    guideFlow: state.reducedMotion
+      ? 'stepped'
+      : calculatedGuideAuPerSecond > MAX_GUIDE_FLOW_AU_PER_SECOND
+        ? 'stabilized'
+        : 'continuous',
+    calculatedGuideAuPerSecond,
+    apparentGuideAuPerSecond,
+    isPlaying: state.isPlaying,
+  };
+}
+
+export const GALACTIC_PLAYBACK_SPEEDS: readonly GalacticPlaybackSpeed[] = [1, 5, 10, 25];
 
 export function createInitialExperienceState(today: Date): ExperienceState {
   const startTimeMs = today.getTime();
@@ -80,6 +135,11 @@ export function createInitialExperienceState(today: Date): ExperienceState {
     currentTimeMs: startTimeMs,
     isPlaying: false,
     speed: 'month',
+    galacticElapsedMillionYears: 0,
+    galacticEndMillionYears: GALACTIC_MODEL.approximatePeriod.value,
+    galacticSpeed: 5,
+    galacticJourneyComplete: false,
+    galacticCompletionDismissed: false,
     frame: 'sun',
     selectedBody: null,
     followedPlanet: null,
@@ -103,14 +163,34 @@ function clampTime(state: ExperienceState, timeMs: number): number {
   return Math.min(state.endTimeMs, Math.max(state.startTimeMs, timeMs));
 }
 
+function clampGalacticElapsedTime(state: ExperienceState, elapsedMillionYears: number): number {
+  return Math.min(state.galacticEndMillionYears, Math.max(0, Math.round(elapsedMillionYears)));
+}
+
 export function updateExperience(state: ExperienceState, action: ExperienceAction): ExperienceState {
   switch (action.type) {
     case 'play':
-      return state.journeyComplete ? state : { ...state, isPlaying: true };
+      return state.frame === 'galaxy'
+        ? state.galacticJourneyComplete ? state : { ...state, isPlaying: true }
+        : state.journeyComplete ? state : { ...state, isPlaying: true };
     case 'pause':
       return { ...state, isPlaying: false };
     case 'advance': {
       if (!state.isPlaying || action.realSeconds <= 0) return state;
+      if (state.frame === 'galaxy') {
+        const galacticElapsedMillionYears = Math.min(
+          state.galacticEndMillionYears,
+          state.galacticElapsedMillionYears + action.realSeconds * state.galacticSpeed,
+        );
+        const galacticJourneyComplete = galacticElapsedMillionYears >= state.galacticEndMillionYears;
+        return {
+          ...state,
+          galacticElapsedMillionYears,
+          galacticJourneyComplete,
+          galacticCompletionDismissed: false,
+          isPlaying: !galacticJourneyComplete,
+        };
+      }
       const requestedTime =
         state.currentTimeMs +
         action.realSeconds * PLAYBACK_DAYS_PER_SECOND[state.speed] * MILLISECONDS_PER_DAY;
@@ -125,6 +205,8 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     }
     case 'set-speed':
       return { ...state, speed: action.speed };
+    case 'set-galactic-speed':
+      return { ...state, galacticSpeed: action.speed };
     case 'scrub': {
       const currentTimeMs = clampTime(state, action.timeMs);
       return {
@@ -133,10 +215,40 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         journeyComplete: currentTimeMs >= state.endTimeMs,
       };
     }
+    case 'scrub-galactic': {
+      const galacticElapsedMillionYears = clampGalacticElapsedTime(state, action.elapsedMillionYears);
+      return {
+        ...state,
+        galacticElapsedMillionYears,
+        galacticJourneyComplete: galacticElapsedMillionYears >= state.galacticEndMillionYears,
+        galacticCompletionDismissed: false,
+        isPlaying: false,
+      };
+    }
     case 'return-today': {
       const currentTimeMs = clampTime(state, action.today.getTime());
       return { ...state, currentTimeMs, journeyComplete: false };
     }
+    case 'return-present':
+      return {
+        ...state,
+        galacticElapsedMillionYears: 0,
+        galacticJourneyComplete: false,
+        galacticCompletionDismissed: false,
+        isPlaying: false,
+      };
+    case 'replay-galactic':
+      return {
+        ...state,
+        galacticElapsedMillionYears: 0,
+        galacticJourneyComplete: false,
+        galacticCompletionDismissed: false,
+        isPlaying: true,
+      };
+    case 'dismiss-completion':
+      return state.frame === 'galaxy'
+        ? { ...state, galacticCompletionDismissed: true, isPlaying: false }
+        : { ...state, isPlaying: false };
     case 'set-frame':
       return action.frame === state.frame
         ? state
@@ -145,6 +257,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
             frame: action.frame,
             selectedBody: action.frame === 'galaxy' ? null : state.selectedBody,
             followedPlanet: null,
+            isPlaying: false,
             trailRevision: state.trailRevision + 1,
             cameraBookmark: action.frame === 'galaxy' ? 'full' : state.cameraBookmark,
             cameraRevision: state.cameraRevision + 1,
@@ -202,6 +315,10 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         isPlaying: false,
         currentTimeMs: state.startTimeMs,
         journeyComplete: false,
+        galacticElapsedMillionYears: 0,
+        galacticSpeed: 5,
+        galacticJourneyComplete: false,
+        galacticCompletionDismissed: false,
         frame: 'sun',
         followedPlanet: null,
         cameraBookmark: 'inner',
@@ -231,6 +348,10 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         ...state,
         currentTimeMs: state.startTimeMs,
         journeyComplete: false,
+        galacticElapsedMillionYears: 0,
+        galacticSpeed: 5,
+        galacticJourneyComplete: false,
+        galacticCompletionDismissed: false,
         isPlaying: false,
         frame: 'sun',
         followedPlanet: null,
