@@ -236,6 +236,90 @@ describe('experience state', () => {
     expect(repeated.cameraRevision).toBe(first.cameraRevision + 1);
   });
 
+  it('toggles Planet follow only for the planet whose card is open', () => {
+    let state = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'saturn' });
+
+    state = updateExperience(state, { type: 'toggle-planet-follow', planet: 'saturn' });
+    expect(state.followedPlanet).toBe('saturn');
+
+    const cameraRevisionWhileFollowing = state.cameraRevision;
+    state = updateExperience(state, { type: 'toggle-planet-follow', planet: 'saturn' });
+    expect(state.followedPlanet).toBeNull();
+    expect(state.cameraRevision).toBe(cameraRevisionWhileFollowing);
+
+    state = updateExperience(state, { type: 'toggle-planet-follow', planet: 'mars' });
+    expect(state.followedPlanet).toBeNull();
+  });
+
+  it('ends Planet follow when its card closes or another planet is selected', () => {
+    const selected = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'saturn' });
+    const following = updateExperience(selected, { type: 'toggle-planet-follow', planet: 'saturn' });
+
+    expect(updateExperience(following, { type: 'select', body: null }).followedPlanet).toBeNull();
+    expect(updateExperience(following, { type: 'select', body: 'mars' }).followedPlanet).toBeNull();
+    expect(updateExperience(following, { type: 'select', body: 'saturn' }).followedPlanet).toBe('saturn');
+  });
+
+  it('routes Planet follow from the Full Journey overview to the Along the Path camera', () => {
+    let state = updateExperience(createInitialExperienceState(TODAY), { type: 'set-frame', frame: 'space' });
+    state = updateExperience(state, { type: 'set-bookmark', bookmark: 'full' });
+    state = updateExperience(state, { type: 'select', body: 'saturn' });
+
+    const following = updateExperience(state, { type: 'toggle-planet-follow', planet: 'saturn' });
+
+    expect(following.frame).toBe('space');
+    expect(following.cameraBookmark).toBe('path');
+    expect(following.cameraRevision).toBe(state.cameraRevision + 1);
+    expect(following.followedPlanet).toBe('saturn');
+  });
+
+  it('ends Planet follow for focus, reset, and Home camera commands', () => {
+    const selected = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'saturn' });
+    const following = updateExperience(selected, { type: 'toggle-planet-follow', planet: 'saturn' });
+
+    expect(updateExperience(following, { type: 'focus-camera' }).followedPlanet).toBeNull();
+    expect(updateExperience(following, { type: 'reset-camera' }).followedPlanet).toBeNull();
+    expect(updateExperience(following, { type: 'return-home' }).followedPlanet).toBeNull();
+  });
+
+  it('ends Planet follow when the view, bookmark, or guided-tour chapter changes', () => {
+    const selected = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'saturn' });
+    const following = updateExperience(selected, { type: 'toggle-planet-follow', planet: 'saturn' });
+
+    expect(updateExperience(following, { type: 'set-frame', frame: 'space' }).followedPlanet).toBeNull();
+    expect(updateExperience(following, { type: 'set-bookmark', bookmark: 'outer' }).followedPlanet).toBeNull();
+    expect(updateExperience(following, { type: 'start-tour' }).followedPlanet).toBeNull();
+    expect(updateExperience(following, { type: 'replay' }).followedPlanet).toBeNull();
+
+    let touring = updateExperience(createInitialExperienceState(TODAY), { type: 'start-tour' });
+    touring = updateExperience(touring, { type: 'select', body: 'saturn' });
+    touring = updateExperience(touring, { type: 'toggle-planet-follow', planet: 'saturn' });
+    expect(updateExperience(touring, { type: 'next-chapter' }).followedPlanet).toBeNull();
+  });
+
+  it('preserves Planet follow while playback and the timeline are adjusted', () => {
+    let state = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'saturn' });
+    state = updateExperience(state, { type: 'toggle-planet-follow', planet: 'saturn' });
+    state = updateExperience(state, { type: 'play' });
+    state = updateExperience(state, { type: 'advance', realSeconds: 1 });
+    state = updateExperience(state, { type: 'pause' });
+    state = updateExperience(state, { type: 'set-speed', speed: 'year' });
+    state = updateExperience(state, { type: 'scrub', timeMs: TODAY.getTime() + 86_400_000 });
+
+    expect(state.followedPlanet).toBe('saturn');
+  });
+
+  it('clears unavailable planet selection when Galaxy Overview opens', () => {
+    let state = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'saturn' });
+    state = updateExperience(state, { type: 'toggle-planet-follow', planet: 'saturn' });
+
+    const galaxy = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
+
+    expect(galaxy.selectedBody).toBeNull();
+    expect(galaxy.followedPlanet).toBeNull();
+    expect(updateExperience(galaxy, { type: 'select', body: 'saturn' }).selectedBody).toBeNull();
+  });
+
   it('keeps Along the Path distance accurate while stabilizing only high-speed guide flow', () => {
     let state = createInitialExperienceState(TODAY);
     state = updateExperience(state, { type: 'set-speed', speed: 'decade' });
