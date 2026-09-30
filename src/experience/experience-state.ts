@@ -1,4 +1,5 @@
 import type { PlanetId } from '../astronomy/solar-system';
+import { calculateLocalTravelDistance } from '../astronomy/reference-frames';
 
 export type ViewMode = 'sun' | 'space' | 'galaxy';
 export type PlaybackSpeed = 'day' | 'month' | 'year' | 'decade';
@@ -36,6 +37,17 @@ export interface ExperienceState {
   readonly tour: TourState;
 }
 
+export type AlongPathGuideFlow = 'continuous' | 'stabilized' | 'stepped';
+
+export interface AlongPathMotion {
+  readonly distanceAu: number;
+  readonly distanceLightYears: number;
+  readonly guideFlow: AlongPathGuideFlow;
+  readonly calculatedGuideAuPerSecond: number;
+  readonly apparentGuideAuPerSecond: number;
+  readonly isPlaying: boolean;
+}
+
 export type ExperienceAction =
   | { readonly type: 'play' }
   | { readonly type: 'pause' }
@@ -57,6 +69,8 @@ export type ExperienceAction =
 const MILLISECONDS_PER_DAY = 86_400_000;
 const JOURNEY_DAYS = 165 * 365.25;
 const LAST_TOUR_CHAPTER = 4;
+const MAX_GUIDE_FLOW_AU_PER_SECOND = 12;
+const REDUCED_MOTION_GUIDE_FLOW_AU_PER_SECOND = 1.5;
 
 export const PLAYBACK_DAYS_PER_SECOND: Readonly<Record<PlaybackSpeed, number>> = {
   day: 1,
@@ -64,6 +78,34 @@ export const PLAYBACK_DAYS_PER_SECOND: Readonly<Record<PlaybackSpeed, number>> =
   year: 365.25,
   decade: 3_652.5,
 };
+
+export function getAlongPathMotion(state: ExperienceState): AlongPathMotion {
+  const distance = calculateLocalTravelDistance(
+    new Date(state.currentTimeMs),
+    new Date(state.startTimeMs),
+  );
+  const calculatedGuideAuPerSecond = calculateLocalTravelDistance(
+    new Date(PLAYBACK_DAYS_PER_SECOND[state.speed] * MILLISECONDS_PER_DAY),
+    new Date(0),
+  ).astronomicalUnits;
+  const apparentGuideAuPerSecond = Math.min(
+    calculatedGuideAuPerSecond,
+    state.reducedMotion ? REDUCED_MOTION_GUIDE_FLOW_AU_PER_SECOND : MAX_GUIDE_FLOW_AU_PER_SECOND,
+  );
+
+  return {
+    distanceAu: distance.astronomicalUnits,
+    distanceLightYears: distance.lightYears,
+    guideFlow: state.reducedMotion
+      ? 'stepped'
+      : calculatedGuideAuPerSecond > MAX_GUIDE_FLOW_AU_PER_SECOND
+        ? 'stabilized'
+        : 'continuous',
+    calculatedGuideAuPerSecond,
+    apparentGuideAuPerSecond,
+    isPlaying: state.isPlaying,
+  };
+}
 
 export function createInitialExperienceState(today: Date): ExperienceState {
   const startTimeMs = today.getTime();

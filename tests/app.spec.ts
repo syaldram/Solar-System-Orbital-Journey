@@ -101,7 +101,12 @@ test('offers a camera reset in every view', async ({ page }) => {
 
 test('keeps the Sun anchored while Along the Path advances', async ({ page }) => {
   await page.goto('./?view=space&camera=path');
-  await page.getByLabel('Speed').selectOption('year');
+  const pathMotion = page.getByRole('region', { name: 'Along the Path motion' });
+  await expect(pathMotion.getByText('Distance traveled')).toBeVisible();
+  await expect(pathMotion.getByText('0 AU', { exact: true })).toBeVisible();
+  await expect(pathMotion.getByText('Continuous coordinate guides')).toBeVisible();
+  await page.getByLabel('Speed').selectOption('decade');
+  await expect(pathMotion.getByText('Guide flow visually stabilized')).toBeVisible();
   await page.waitForTimeout(900);
 
   const sunMarker = page.getByRole('button', { name: 'Select Sun' });
@@ -111,8 +116,27 @@ test('keeps the Sun anchored while Along the Path advances', async ({ page }) =>
   await page.getByRole('button', { name: 'Pause simulation' }).click();
   const after = await sunMarker.boundingBox();
 
+  await expect(pathMotion.getByText('0 AU', { exact: true })).toBeHidden();
   expect(before).not.toBeNull();
   expect(after).not.toBeNull();
   expect(Math.abs((after?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(1);
   expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(1);
+
+  await page.getByRole('button', { name: 'Explain this view' }).click();
+  await expect(page.getByText(/only the apparent guide flow is capped/i)).toBeVisible();
+});
+
+test('keeps accurate Along the Path distance available with reduced motion', async ({ page }) => {
+  await page.goto('./?view=space&camera=path');
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Reduce motion').check();
+
+  const pathMotion = page.getByRole('region', { name: 'Along the Path motion' });
+  await expect(pathMotion.getByText('Subdued stepped guide updates')).toBeVisible();
+  await page.locator('#timeline-range').fill('10000');
+  await expect(pathMotion.getByText('7,657 AU', { exact: true })).toBeVisible();
+  await expect(pathMotion.getByText('0.121 light-years', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Show Full Journey' }).click();
+  await expect(pathMotion).toBeHidden();
 });

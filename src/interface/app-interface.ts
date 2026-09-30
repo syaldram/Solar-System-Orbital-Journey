@@ -1,6 +1,7 @@
 import type { PlanetProfile } from '../astronomy/planet-data';
 import { GALACTIC_MODEL } from '../astronomy/reference-frames';
 import type {
+  AlongPathMotion,
   ExperienceAction,
   ExperienceState,
   SelectableBody,
@@ -54,8 +55,8 @@ const EXPLANATIONS: Readonly<Record<ViewMode, { title: string; html: string; sta
   space: {
     title: 'Watch from Space',
     status: 'Rolling local window · straight tangent approximation',
-    html: `<p>This is a rolling window in a local galactic coordinate frame. Along the Path keeps the Sun stable while the abstract grid flows backward smoothly.</p>
-      <ul><li>The Sun moves at an adopted ${GALACTIC_MODEL.localSpeed.value} km/s.</li><li>Across 165 years it travels about ${GALACTIC_MODEL.fullJourneyDistance.value.toLocaleString('en')} AU.</li><li>Full Journey preserves the real transverse scale and omits misleading century-long planet trails.</li><li>The true galactic path curves too little to detect here, so this segment is rendered as a straight local tangent.</li></ul>`,
+    html: `<p>This is a rolling window in a local galactic coordinate frame. Along the Path keeps the Sun stable while continuous coordinate guides, distance ticks, and sparse abstract depth markers move backward.</p>
+      <ul><li>The Sun moves at an adopted ${GALACTIC_MODEL.localSpeed.value} km/s, and the numerical distance stays derived from simulated UTC time.</li><li>Across 165 years it travels about ${GALACTIC_MODEL.fullJourneyDistance.value.toLocaleString('en')} AU.</li><li>At high playback speeds, only the apparent guide flow is capped and its density adjusted to prevent strobing; simulated time, distance, and the Full Journey position remain accurate.</li><li>Reduced motion uses subdued stepped guide updates. The markers are abstract orientation cues, not a nearby-star catalog, stellar wake, or physical trail.</li><li>Full Journey preserves the real transverse scale and omits misleading century-long planet trails.</li><li>The true galactic path curves too little to detect here, so this segment is rendered as a straight local tangent.</li></ul>`,
   },
   galaxy: {
     title: 'Galaxy Overview',
@@ -183,7 +184,7 @@ export class AppInterface {
     });
   }
 
-  render(state: ExperienceState): void {
+  render(state: ExperienceState, pathMotion: AlongPathMotion): void {
     this.timeline.dataset.start = String(state.startTimeMs);
     this.timeline.dataset.end = String(state.endTimeMs);
     this.timeline.value = String(
@@ -198,6 +199,23 @@ export class AppInterface {
     element<HTMLSelectElement>('speed-select').value = state.speed;
     element<HTMLSelectElement>('quality-select').value = state.quality;
     element<HTMLInputElement>('reduced-motion').checked = state.reducedMotion;
+
+    const pathMotionPanel = element<HTMLElement>('path-motion');
+    pathMotionPanel.hidden = state.frame !== 'space' || state.cameraBookmark !== 'path';
+    pathMotionPanel.dataset.guideFlow = pathMotion.guideFlow;
+    element<HTMLElement>('path-distance-au').textContent = `${formatNumber(
+      pathMotion.distanceAu,
+      pathMotion.distanceAu < 1 ? 2 : pathMotion.distanceAu < 100 ? 1 : 0,
+    )} AU`;
+    element<HTMLElement>('path-distance-light-years').textContent = `${formatNumber(
+      pathMotion.distanceLightYears,
+      3,
+    )} light-years`;
+    element<HTMLElement>('path-guide-status').textContent = pathMotion.guideFlow === 'stepped'
+      ? 'Subdued stepped guide updates'
+      : pathMotion.guideFlow === 'stabilized'
+        ? 'Guide flow visually stabilized'
+        : 'Continuous coordinate guides';
 
     document.querySelectorAll<HTMLButtonElement>('[data-frame]').forEach((button) => {
       button.setAttribute('aria-pressed', String(button.dataset.frame === state.frame));

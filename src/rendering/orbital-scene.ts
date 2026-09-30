@@ -5,6 +5,7 @@ import { PLANET_IDS, getPlanetProfile } from '../astronomy/planet-data';
 import type { PlanetId, Vector3Au } from '../astronomy/solar-system';
 import { eclipticToGalactic, type SystemSnapshot } from '../astronomy/reference-frames';
 import type {
+  AlongPathMotion,
   CameraBookmark,
   QualityPreference,
   SelectableBody,
@@ -42,6 +43,7 @@ export interface SceneState {
   readonly rotationStabilized: boolean;
   readonly trailRevision: number;
   readonly journeyProgress: number;
+  readonly pathMotion: AlongPathMotion;
 }
 
 export interface OrbitalSceneOptions {
@@ -55,6 +57,13 @@ export interface OrbitalSceneOptions {
 const MAX_TRAIL_POINTS = 56;
 const CAMERA_TWEEN_DURATION_MS = 800;
 const MARKER_VISIBILITY_THRESHOLD_PX = 6;
+const GUIDE_NEAR_Z = -720;
+const GUIDE_FAR_Z = 240;
+const GUIDE_HALF_WIDTH = 92;
+const GUIDE_TICK_SPACING_AU = 20;
+const GUIDE_TICK_LABEL_COUNT = 6;
+const GUIDE_RAIL_X = [-92, -46, 0, 46, 92] as const;
+const REDUCED_GUIDE_STEP_MS = 450;
 
 function toSceneVector(position: Vector3Au, scale = AU_SCALE): THREE.Vector3 {
   return new THREE.Vector3(position.x * scale, position.z * scale, position.y * scale);
@@ -84,7 +93,8 @@ export class OrbitalScene {
   private readonly sunMaterial: THREE.ShaderMaterial;
   private readonly sunGlow: THREE.Sprite;
   private readonly planeOverlay: THREE.Mesh;
-  private readonly localGrid: THREE.GridHelper;
+  private readonly coordinateGuides: THREE.LineSegments;
+  private readonly depthMarkers: THREE.Points;
   private readonly localPath: THREE.Line;
   private readonly fullJourneyPath: THREE.Line;
   private readonly galaxySunMarker: THREE.Mesh;
@@ -94,6 +104,8 @@ export class OrbitalScene {
   private readonly earthClouds: THREE.Mesh | null;
   private readonly ringMaterials: readonly THREE.MeshStandardMaterial[];
   private readonly solarSystemLabel: HTMLDivElement;
+  private readonly pathTickLabels: readonly HTMLDivElement[];
+  private readonly pathTickPositions: THREE.Vector3[] = [];
   private readonly labelLayer: HTMLElement;
   private readonly onSelect: (body: SelectableBody) => void;
   private readonly onQualityAdapted: (quality: Exclude<QualityPreference, 'auto'>) => void;
@@ -123,6 +135,10 @@ export class OrbitalScene {
   private hoveredBody: SelectableBody | null = null;
   private sunSurfaceTime = 0;
   private lastSunAnimationAt = performance.now();
+  private displayedGuideDistanceAu: number | null = null;
+  private previousGuideTargetAu: number | null = null;
+  private lastGuideAnimationAt = performance.now();
+  private lastReducedGuideStepAt = 0;
 
   constructor(options: OrbitalSceneOptions) {
     this.labelLayer = options.labelLayer;
@@ -196,14 +212,24 @@ export class OrbitalScene {
     this.planeOverlay.rotation.x = -Math.PI / 2;
     this.solarGroup.add(this.planeOverlay);
 
-    this.localGrid = new THREE.GridHelper(1_000, 50, 0x4d7c91, 0x24334b);
-    this.localGrid.rotation.x = Math.PI / 2;
-    const gridMaterials = Array.isArray(this.localGrid.material) ? this.localGrid.material : [this.localGrid.material];
-    for (const material of gridMaterials) {
-      material.transparent = true;
-      material.opacity = 0.16;
-    }
-    this.localGuides.add(this.localGrid);
+    this.coordinateGuides = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: 0x4d8ca2, opacity: 0.22, transparent: true }),
+    );
+    this.coordinateGuides.frustumCulled = false;
+    this.depthMarkers = new THREE.Points(
+      new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({
+        color: 0x75d7e8,
+        size: 0.75,
+        transparent: true,
+        opacity: 0.42,
+        sizeAttenuation: true,
+        depthWrite: false,
+      }),
+    );
+    this.depthMarkers.frustumCulled = false;
+    this.localGuides.add(this.coordinateGuides, this.depthMarkers);
 
     this.localPath = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
@@ -238,6 +264,14 @@ export class OrbitalScene {
     this.solarSystemLabel.setAttribute('role', 'note');
     this.solarSystemLabel.hidden = true;
     this.labelLayer.append(this.solarSystemLabel);
+    this.pathTickLabels = Array.from({ length: GUIDE_TICK_LABEL_COUNT }, () => {
+      const label = document.createElement('div');
+      label.className = 'path-distance-tick';
+      label.setAttribute('aria-hidden', 'true');
+      label.hidden = true;
+      this.labelLayer.append(label);
+      return label;
+    });
 
     options.canvas.addEventListener('pointermove', (event) => this.handlePointerMove(event));
     options.canvas.addEventListener('pointerleave', () => {
@@ -285,6 +319,7 @@ export class OrbitalScene {
     this.applyPendingFocus(nowMs);
     this.updateCameraTween(state.reducedMotion, nowMs);
     this.controls.update();
+    this.updatePathGuides(state, nowMs);
     this.updateSunSurface(state.reducedMotion, nowMs);
     this.updateLabels(state);
     this.renderer.render(this.scene, this.camera);
@@ -615,7 +650,8 @@ export class OrbitalScene {
     this.localGuides.visible = state.frame === 'space';
     this.galaxyGroup.visible = isGalaxy;
     this.localPath.visible = state.frame === 'space' && !isFullJourney;
-    this.localGrid.visible = state.frame === 'space' && !isFullJourney;
+    this.coordinateGuides.visible = state.frame === 'space' && !isFullJourney;
+    this.depthMarkers.visible = state.frame === 'space' && !isFullJourney;
     this.fullJourneyPath.visible = isFullJourney;
     this.planeOverlay.visible = state.viewOptions.planeOverlays && !isFullJourney;
 
@@ -641,14 +677,10 @@ export class OrbitalScene {
       const journeyPosition = -FULL_JOURNEY_LENGTH / 2 + state.journeyProgress * FULL_JOURNEY_LENGTH;
       this.solarGroup.scale.setScalar(FULL_JOURNEY_GROUP_SCALE);
       this.solarGroup.position.set(0, 0, journeyPosition);
-      this.localGrid.position.set(0, 0, 0);
     } else if (state.frame === 'space') {
-      const scroll = ((sunPosition.y * AU_SCALE) % 20 + 20) % 20;
-      this.localGrid.position.set(0, 0, -scroll);
       this.solarGroup.scale.setScalar(1);
       this.solarGroup.position.set(0, 0, 0);
     } else {
-      this.localGrid.position.set(0, 0, 0);
       this.solarGroup.scale.setScalar(1);
       this.solarGroup.position.set(0, 0, 0);
     }
@@ -712,6 +744,104 @@ export class OrbitalScene {
       line.geometry.dispose();
       line.geometry = new THREE.BufferGeometry().setFromPoints(points);
     }
+  }
+
+  private updatePathGuides(state: SceneState, nowMs: number): void {
+    const active = state.frame === 'space' && state.bookmark !== 'full';
+    if (!active) {
+      this.displayedGuideDistanceAu = null;
+      this.previousGuideTargetAu = null;
+      this.lastGuideAnimationAt = nowMs;
+      this.pathTickPositions.length = 0;
+      for (const label of this.pathTickLabels) label.hidden = true;
+      return;
+    }
+
+    const targetAu = state.pathMotion.distanceAu;
+    const elapsedSeconds = Math.min(0.1, Math.max(0, (nowMs - this.lastGuideAnimationAt) / 1_000));
+    this.lastGuideAnimationAt = nowMs;
+    if (this.displayedGuideDistanceAu === null) {
+      this.displayedGuideDistanceAu = targetAu;
+    } else if (!state.pathMotion.isPlaying && this.previousGuideTargetAu !== targetAu) {
+      if (state.journeyProgress >= 1) {
+        const maximumChange = state.pathMotion.apparentGuideAuPerSecond * elapsedSeconds;
+        const remaining = targetAu - this.displayedGuideDistanceAu;
+        this.displayedGuideDistanceAu += Math.sign(remaining) * Math.min(Math.abs(remaining), maximumChange);
+      } else {
+        this.displayedGuideDistanceAu = targetAu;
+      }
+    } else if (state.pathMotion.isPlaying) {
+      const reducedStepDue = nowMs - this.lastReducedGuideStepAt >= REDUCED_GUIDE_STEP_MS;
+      if (state.pathMotion.guideFlow !== 'stepped' || reducedStepDue) {
+        const flowSeconds = state.pathMotion.guideFlow === 'stepped'
+          ? REDUCED_GUIDE_STEP_MS / 1_000
+          : elapsedSeconds;
+        const maximumChange = state.pathMotion.apparentGuideAuPerSecond * flowSeconds;
+        const remaining = targetAu - this.displayedGuideDistanceAu;
+        this.displayedGuideDistanceAu += Math.sign(remaining) * Math.min(Math.abs(remaining), maximumChange);
+        if (state.pathMotion.guideFlow === 'stepped') this.lastReducedGuideStepAt = nowMs;
+      }
+    }
+    this.previousGuideTargetAu = targetAu;
+    this.rebuildPathGuides(this.displayedGuideDistanceAu, state);
+  }
+
+  private rebuildPathGuides(displayedDistanceAu: number, state: SceneState): void {
+    const linePositions: number[] = [];
+    for (const x of GUIDE_RAIL_X) {
+      linePositions.push(x, -10, GUIDE_NEAR_Z, x, -10, GUIDE_FAR_Z);
+    }
+
+    const firstVisibleDistanceAu = Math.max(0, displayedDistanceAu - GUIDE_FAR_Z / AU_SCALE);
+    const lastVisibleDistanceAu = displayedDistanceAu - GUIDE_NEAR_Z / AU_SCALE;
+    const firstTickAu = Math.ceil(firstVisibleDistanceAu / GUIDE_TICK_SPACING_AU) * GUIDE_TICK_SPACING_AU;
+    this.pathTickPositions.length = 0;
+    let labelIndex = 0;
+    for (let tickAu = firstTickAu; tickAu <= lastVisibleDistanceAu; tickAu += GUIDE_TICK_SPACING_AU) {
+      const z = (displayedDistanceAu - tickAu) * AU_SCALE;
+      linePositions.push(-GUIDE_HALF_WIDTH, -10, z, GUIDE_HALF_WIDTH, -10, z);
+      linePositions.push(-GUIDE_HALF_WIDTH, -10, z, -GUIDE_HALF_WIDTH, -3, z);
+      if (labelIndex < this.pathTickLabels.length) {
+        const label = this.pathTickLabels[labelIndex];
+        if (label) {
+          label.textContent = `${Math.round(tickAu).toLocaleString('en')} AU`;
+          label.hidden = false;
+          this.pathTickPositions.push(new THREE.Vector3(-GUIDE_HALF_WIDTH, -2, z));
+        }
+        labelIndex += 1;
+      }
+    }
+    for (let index = labelIndex; index < this.pathTickLabels.length; index += 1) {
+      const label = this.pathTickLabels[index];
+      if (label) label.hidden = true;
+    }
+    this.coordinateGuides.geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(linePositions, 3),
+    );
+
+    const quality = state.quality === 'auto' ? 'high' : state.quality;
+    const baseMarkerSpacingAu = quality === 'high' ? 4 : quality === 'balanced' ? 7 : 12;
+    const markerSpacingAu = baseMarkerSpacingAu
+      * (state.pathMotion.guideFlow === 'stabilized' ? 1.6 : state.pathMotion.guideFlow === 'stepped' ? 2.4 : 1);
+    const firstMarkerIndex = Math.floor(firstVisibleDistanceAu / markerSpacingAu) - 1;
+    const markerPositions: number[] = [];
+    for (let index = firstMarkerIndex; ; index += 1) {
+      const markerDistanceAu = index * markerSpacingAu;
+      const z = (displayedDistanceAu - markerDistanceAu) * AU_SCALE;
+      if (z < GUIDE_NEAR_Z) break;
+      if (z > GUIDE_FAR_Z) continue;
+      const horizontalSeed = Math.sin(index * 12.9898 + 4.1414) * 43_758.5453;
+      const verticalSeed = Math.sin(index * 78.233 + 1.732) * 12_345.6789;
+      const horizontalUnit = horizontalSeed - Math.floor(horizontalSeed);
+      const verticalUnit = verticalSeed - Math.floor(verticalSeed);
+      const side = index % 2 === 0 ? 1 : -1;
+      markerPositions.push(side * (28 + horizontalUnit * 88), -46 + verticalUnit * 86, z);
+    }
+    this.depthMarkers.geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(markerPositions, 3),
+    );
   }
 
   private updateSelection(selected: SelectableBody | null): void {
@@ -822,6 +952,26 @@ export class OrbitalScene {
       if (!behind) {
         this.solarSystemLabel.style.left = `${(solarSystemPosition.x * 0.5 + 0.5) * width}px`;
         this.solarSystemLabel.style.top = `${(-solarSystemPosition.y * 0.5 + 0.5) * height - 34}px`;
+      }
+    }
+
+    const showPathTicks = state.frame === 'space' && state.bookmark === 'path';
+    for (let index = 0; index < this.pathTickLabels.length; index += 1) {
+      const label = this.pathTickLabels[index];
+      const position = this.pathTickPositions[index];
+      if (!label || !position || !showPathTicks) {
+        if (label) label.hidden = true;
+        continue;
+      }
+      const projected = position.clone().project(this.camera);
+      const behind = projected.z < -1 || projected.z > 1;
+      const x = (projected.x * 0.5 + 0.5) * width;
+      const y = (-projected.y * 0.5 + 0.5) * height;
+      const offscreen = x < 0 || x > width || y < 0 || y > height;
+      label.hidden = behind || offscreen;
+      if (!label.hidden) {
+        label.style.left = `${x}px`;
+        label.style.top = `${y}px`;
       }
     }
   }
