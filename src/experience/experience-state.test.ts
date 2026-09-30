@@ -160,6 +160,25 @@ describe('experience state', () => {
     expect(state.isPlaying).toBe(false);
   });
 
+  it('restores the preserved Solar-System clock paused after Galactic playback', () => {
+    let state = createInitialExperienceState(TODAY);
+    state = updateExperience(state, { type: 'set-speed', speed: 'year' });
+    state = updateExperience(state, { type: 'scrub', timeMs: TODAY.getTime() + 10 * 86_400_000 });
+    const solarTime = state.currentTimeMs;
+
+    state = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
+    state = updateExperience(state, { type: 'set-galactic-speed', speed: 10 });
+    state = updateExperience(state, { type: 'play' });
+    state = updateExperience(state, { type: 'advance', realSeconds: 3 });
+    state = updateExperience(state, { type: 'set-frame', frame: 'space' });
+
+    expect(state.currentTimeMs).toBe(solarTime);
+    expect(state.speed).toBe('year');
+    expect(state.isPlaying).toBe(false);
+    expect(state.galacticElapsedMillionYears).toBe(30);
+    expect(state.galacticSpeed).toBe(10);
+  });
+
   it('moves through the skippable five-chapter tour', () => {
     let state = updateExperience(createInitialExperienceState(TODAY), { type: 'start-tour' });
     expect(state.tour).toEqual({ status: 'running', chapter: 0 });

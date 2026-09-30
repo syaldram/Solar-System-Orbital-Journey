@@ -24,4 +24,20 @@ describe('shareable URL state', () => {
 
     expect(decodeSharedView(invalid)).toEqual({});
   });
+
+  it('ignores Galactic elapsed time and speed fields', () => {
+    const decoded = decodeSharedView(new URLSearchParams({
+      date: '2042-03-14T12:30:00.000Z',
+      view: 'galaxy',
+      camera: 'full',
+      galacticElapsedMillionYears: '80',
+      galacticSpeed: '25',
+    }));
+
+    expect(decoded).toEqual({
+      timeMs: Date.parse('2042-03-14T12:30:00.000Z'),
+      frame: 'galaxy',
+      cameraBookmark: 'full',
+    });
+  });
 });

@@ -165,7 +165,12 @@ function dispatch(action: ExperienceAction): void {
     persistPreferences(state);
   }
   const now = performance.now();
-  if (action.type !== 'advance' || now - lastInterfaceRenderAt >= 100 || state.journeyComplete) {
+  if (
+    action.type !== 'advance' ||
+    now - lastInterfaceRenderAt >= 100 ||
+    state.journeyComplete ||
+    state.galacticJourneyComplete
+  ) {
     lastInterfaceRenderAt = now;
     renderInterface();
   }
