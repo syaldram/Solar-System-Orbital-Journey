@@ -24,11 +24,17 @@ At year-per-second and decade-per-second playback, surface rotation is visually 
 
 The local Sun model adopts 220 km/s. Across 165 Julian years the Sun travels about 7,657 AU (about 0.121 light-years), while traversing only about 0.000258° of a roughly 230-million-year galactic orbit. The local path is therefore drawn as a straight tangent. The rolling view uses an abstract coordinate grid rather than pretending nearby stars are fixed.
 
-The Along the Path camera is a moving presentation of that same space-frame calculation: it keeps the Sun near a stable screen position while the abstract galactic guides move backward continuously. This camera treatment does not alter the calculated reference frame or recycle the Solar System's position. The Full Journey overview shows the Sun and planets at their current calculated positions with the real transverse-to-forward distance ratio. It omits full-length planetary trails so the visualization does not imply that a corkscrew path is an absolute physical structure.
+The Along the Path camera is a moving presentation of that same space-frame calculation: it keeps the Sun near a stable screen position while abstract coordinate guides, distance ticks, and sparse depth markers move backward. At high playback speeds their apparent flow is visually stabilized to prevent strobing, while the simulated time and displayed distance remain accurate. Distance traveled is presented primarily in astronomical units with light-years as secondary context. This camera treatment does not alter the calculated reference frame or recycle the Solar System's position. The Full Journey overview shows the Sun and planets at their current calculated positions with the real transverse-to-forward distance ratio. It omits full-length planetary trails so the visualization does not imply that a corkscrew path is an absolute physical structure.
 
 **Galaxy Overview** is explicitly schematic. It places the Sun about 26,000 light-years from the center on a simplified circular path and omits vertical and radial oscillations. The rendered spiral is not a star-by-star map and does not assert exact spiral-arm geometry.
 
 Its diffuse disk, central bar, dust lanes, spiral structure, nebular color, and sparse foreground stars are orientation artwork rather than a catalog of observed stellar positions. The Sun's orbit line and direction arrow are likewise explanatory overlays.
+
+Galaxy Overview animates a small luminous Sun marker using Galactic elapsed time from the present-location anchor through one approximately 230-million-year schematic orbit. The marker and its corona halo are orientation graphics, not a physically scaled solar globe. Its direction arrow remains tangent to the orbit, and the highlighted portion of the circular line communicates progress as an explanatory overlay rather than a physical trail. The galaxy and camera remain stationary during playback unless the user manually moves the camera.
+
+Galactic elapsed time is not a UTC date or a predictive galactic ephemeris, and it is never passed to the planetary position model. The interface displays whole millions of years to reflect the approximation's limited precision.
+
+The Sun's procedural granulation, corona filaments, and glow are presentation effects rather than modeled solar weather. They evolve independently of simulation speed and freeze when reduced motion is enabled.
 
 ## Display scale
 
