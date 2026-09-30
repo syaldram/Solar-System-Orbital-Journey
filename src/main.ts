@@ -252,6 +252,7 @@ function animate(now: number): void {
         trailRevision: state.trailRevision,
         journeyProgress: (state.currentTimeMs - state.startTimeMs) / (state.endTimeMs - state.startTimeMs),
         pathMotion: getAlongPathMotion(state),
+        galacticProgress: state.galacticElapsedMillionYears / state.galacticEndMillionYears,
       },
       now,
     );
