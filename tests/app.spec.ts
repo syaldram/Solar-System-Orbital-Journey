@@ -166,11 +166,32 @@ test('adapts the shared timeline to paused Galactic elapsed time controls', asyn
   await expect(page.getByText('Approximately 230 million years elapsed', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Continue Exploring' }).click();
   await expect(page.getByRole('heading', { name: 'Schematic orbit complete' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Galactic Orbit Complete' })).toBeDisabled();
 
   await page.getByRole('button', { name: 'Return to Present' }).click();
   await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('230');
   await page.getByRole('button', { name: 'Replay from Present' }).click();
   await expect(page.getByRole('button', { name: 'Pause Galactic Orbit' })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('replays or dismisses Solar-System completion without starting the guided tour', async ({ page }) => {
+  await page.goto('./?view=sun&camera=inner');
+  const timeline = page.getByLabel('Simulated date across 165 years');
+
+  await timeline.fill('10000');
+  await expect(page.getByRole('heading', { name: 'Journey complete' })).toBeVisible();
+  await page.getByRole('button', { name: 'Replay from Today' }).click();
+  await expect(timeline).toHaveValue('0');
+  await expect(page.getByRole('button', { name: 'Pause simulation' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('Chapter 1 of 5')).toBeHidden();
+
+  await page.getByRole('button', { name: 'Pause simulation' }).click();
+  await timeline.fill('10000');
+  await page.getByRole('button', { name: 'Continue Exploring' }).click();
+  await expect(page.getByRole('heading', { name: 'Journey complete' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Simulation Complete' })).toBeDisabled();
+  await page.waitForTimeout(250);
+  await expect(page.getByRole('heading', { name: 'Journey complete' })).toBeHidden();
 });
 
 test('preserves both clocks in session and restores Solar-System playback paused', async ({ page }) => {
@@ -355,7 +376,7 @@ test('shows Galactic completion when playback reaches one orbit', async ({ page 
 
   await expect(page.getByRole('heading', { name: 'Schematic orbit complete' })).toBeVisible();
   await expect(page.getByText('Approximately 230 million years elapsed', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Resume Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Galactic Orbit Complete' })).toBeDisabled();
 });
 
 test('keeps the Sun anchored while Along the Path advances', async ({ page }) => {
@@ -405,7 +426,7 @@ test('describes procedural solar presentation and honors reduced motion', async 
   page.on('pageerror', (error) => pageErrors.push(error));
   await page.goto('./?view=sun&camera=inner');
 
-  const solarPresentation = page.getByRole('status', { name: 'Solar presentation' });
+  const solarPresentation = page.getByRole('note', { name: 'Solar presentation' });
   await expect(solarPresentation).toContainText('Decorative solar motion active');
 
   await page.getByRole('button', { name: 'Explain this view' }).click();
@@ -426,7 +447,7 @@ test('adapts procedural solar detail to the selected visual quality', async ({ p
   page.on('pageerror', (error) => pageErrors.push(error));
   await page.goto('./?view=sun&camera=inner');
 
-  const solarPresentation = page.getByRole('status', { name: 'Solar presentation' });
+  const solarPresentation = page.getByRole('note', { name: 'Solar presentation' });
   await expect(solarPresentation).toContainText('Layered corona detail: full');
 
   await page.getByRole('button', { name: 'View options' }).click();
@@ -444,7 +465,7 @@ test('keeps solar presentation independent of both playback clocks', async ({ pa
   page.on('pageerror', (error) => pageErrors.push(error));
   await page.goto('./?view=sun&camera=inner');
 
-  const solarPresentation = page.getByRole('status', { name: 'Solar presentation' });
+  const solarPresentation = page.getByRole('note', { name: 'Solar presentation' });
   await expect(solarPresentation).toContainText('Driven by real presentation time; playback speed independent');
 
   for (const speed of ['day', 'month', 'year', 'decade']) {
@@ -607,6 +628,41 @@ test('preserves Planet follow through camera gestures and time controls', async 
   }
 
   await expect(stop).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('preserves the user panned camera offset while Planet follow advances', async ({ page }) => {
+  await page.goto('./?view=space&body=saturn&camera=path');
+  await page.getByRole('button', { name: 'Follow Planet' }).click();
+  await page.waitForTimeout(950);
+
+  const saturn = page.getByRole('button', { name: 'Select Saturn' });
+  const beforePan = await saturn.boundingBox();
+  const canvas = await page.locator('canvas').boundingBox();
+  expect(beforePan).not.toBeNull();
+  expect(canvas).not.toBeNull();
+  if (canvas) {
+    await page.mouse.move(canvas.x + canvas.width * 0.45, canvas.y + canvas.height * 0.45);
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.move(canvas.x + canvas.width * 0.65, canvas.y + canvas.height * 0.55, { steps: 8 });
+    await page.mouse.up({ button: 'right' });
+  }
+  await page.waitForTimeout(900);
+  const afterPan = await saturn.boundingBox();
+  expect(afterPan).not.toBeNull();
+  expect(Math.hypot(
+    (afterPan?.x ?? 0) - (beforePan?.x ?? 0),
+    (afterPan?.y ?? 0) - (beforePan?.y ?? 0),
+  )).toBeGreaterThan(5);
+
+  await page.getByLabel('Simulated date across 165 years').fill('5000');
+  await page.waitForTimeout(250);
+  const afterAdvance = await saturn.boundingBox();
+  expect(afterAdvance).not.toBeNull();
+  expect(Math.hypot(
+    (afterAdvance?.x ?? 0) - (afterPan?.x ?? 0),
+    (afterAdvance?.y ?? 0) - (afterPan?.y ?? 0),
+  )).toBeLessThan(5);
+  await expect(page.getByRole('button', { name: 'Stop Following Saturn' })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('ends Planet follow when the guided journey changes chapter', async ({ page }) => {

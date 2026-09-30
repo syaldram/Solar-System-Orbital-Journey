@@ -168,6 +168,33 @@ describe('experience state', () => {
     expect(state.galacticElapsedMillionYears).toBe(230);
   });
 
+  it('replays a completed Solar-System journey without starting the guided tour', () => {
+    let state = createInitialExperienceState(TODAY);
+    state = updateExperience(state, { type: 'set-speed', speed: 'decade' });
+    state = updateExperience(state, { type: 'skip-tour' });
+    state = updateExperience(state, { type: 'scrub', timeMs: state.endTimeMs });
+
+    state = updateExperience(state, { type: 'replay-solar' });
+
+    expect(state.currentTimeMs).toBe(state.startTimeMs);
+    expect(state.speed).toBe('decade');
+    expect(state.journeyComplete).toBe(false);
+    expect(state.isPlaying).toBe(true);
+    expect(state.tour.status).toBe('skipped');
+  });
+
+  it('dismisses Solar-System completion without changing its completed endpoint', () => {
+    let state = createInitialExperienceState(TODAY);
+    state = updateExperience(state, { type: 'scrub', timeMs: state.endTimeMs });
+
+    state = updateExperience(state, { type: 'dismiss-completion' });
+
+    expect(state.currentTimeMs).toBe(state.endTimeMs);
+    expect(state.journeyComplete).toBe(true);
+    expect(state.journeyCompletionDismissed).toBe(true);
+    expect(state.isPlaying).toBe(false);
+  });
+
   it('preserves Galactic progress in memory while only the active Solar-System clock advances', () => {
     let state = createInitialExperienceState(TODAY);
     state = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
@@ -357,7 +384,7 @@ describe('experience state', () => {
     expect(motion.distanceAu).toBeCloseTo(464.1, 1);
     expect(motion.distanceLightYears).toBeCloseTo(0.00734, 5);
     expect(motion.guideFlow).toBe('stabilized');
-    expect(motion.apparentGuideAuPerSecond).toBeLessThan(motion.calculatedGuideAuPerSecond);
+    expect(motion.apparentGuideAuPerSecond).toBe(12);
   });
 
   it('uses subdued stepped guides without changing the numerical distance in reduced motion', () => {
@@ -372,6 +399,6 @@ describe('experience state', () => {
 
     expect(reduced.guideFlow).toBe('stepped');
     expect(reduced.distanceAu).toBe(ordinaryDistance);
-    expect(reduced.apparentGuideAuPerSecond).toBeLessThan(reduced.calculatedGuideAuPerSecond);
+    expect(reduced.apparentGuideAuPerSecond).toBe(1.5);
   });
 });

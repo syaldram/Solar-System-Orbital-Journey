@@ -41,6 +41,7 @@ export interface ExperienceState {
   readonly quality: QualityPreference;
   readonly trailRevision: number;
   readonly journeyComplete: boolean;
+  readonly journeyCompletionDismissed: boolean;
   readonly tour: TourState;
 }
 
@@ -50,7 +51,6 @@ export interface AlongPathMotion {
   readonly distanceAu: number;
   readonly distanceLightYears: number;
   readonly guideFlow: AlongPathGuideFlow;
-  readonly calculatedGuideAuPerSecond: number;
   readonly apparentGuideAuPerSecond: number;
   readonly isPlaying: boolean;
 }
@@ -71,6 +71,7 @@ export type ExperienceAction =
   | { readonly type: 'scrub-galactic'; readonly elapsedMillionYears: number }
   | { readonly type: 'return-today'; readonly today: Date }
   | { readonly type: 'return-present' }
+  | { readonly type: 'replay-solar' }
   | { readonly type: 'replay-galactic' }
   | { readonly type: 'dismiss-completion' }
   | { readonly type: 'set-frame'; readonly frame: ViewMode }
@@ -106,12 +107,12 @@ export function getAlongPathMotion(state: ExperienceState): AlongPathMotion {
     new Date(state.currentTimeMs),
     new Date(state.startTimeMs),
   );
-  const calculatedGuideAuPerSecond = calculateLocalTravelDistance(
+  const uncappedGuideAuPerSecond = calculateLocalTravelDistance(
     new Date(PLAYBACK_DAYS_PER_SECOND[state.speed] * MILLISECONDS_PER_DAY),
     new Date(0),
   ).astronomicalUnits;
   const apparentGuideAuPerSecond = Math.min(
-    calculatedGuideAuPerSecond,
+    uncappedGuideAuPerSecond,
     state.reducedMotion ? REDUCED_MOTION_GUIDE_FLOW_AU_PER_SECOND : MAX_GUIDE_FLOW_AU_PER_SECOND,
   );
 
@@ -120,10 +121,9 @@ export function getAlongPathMotion(state: ExperienceState): AlongPathMotion {
     distanceLightYears: distance.lightYears,
     guideFlow: state.reducedMotion
       ? 'stepped'
-      : calculatedGuideAuPerSecond > MAX_GUIDE_FLOW_AU_PER_SECOND
+      : uncappedGuideAuPerSecond > MAX_GUIDE_FLOW_AU_PER_SECOND
         ? 'stabilized'
         : 'continuous',
-    calculatedGuideAuPerSecond,
     apparentGuideAuPerSecond,
     isPlaying: state.isPlaying,
   };
@@ -177,6 +177,7 @@ export function createInitialExperienceState(today: Date): ExperienceState {
     quality: 'auto',
     trailRevision: 0,
     journeyComplete: false,
+    journeyCompletionDismissed: false,
     tour: { status: 'idle', chapter: 0 },
   };
 }
@@ -222,6 +223,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         ...state,
         currentTimeMs,
         journeyComplete,
+        journeyCompletionDismissed: false,
         isPlaying: journeyComplete ? false : state.isPlaying,
       };
     }
@@ -235,6 +237,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         ...state,
         currentTimeMs,
         journeyComplete: currentTimeMs >= state.endTimeMs,
+        journeyCompletionDismissed: false,
       };
     }
     case 'scrub-galactic': {
@@ -249,7 +252,12 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     }
     case 'return-today': {
       const currentTimeMs = clampTime(state, action.today.getTime());
-      return { ...state, currentTimeMs, journeyComplete: false };
+      return {
+        ...state,
+        currentTimeMs,
+        journeyComplete: false,
+        journeyCompletionDismissed: false,
+      };
     }
     case 'return-present':
       return {
@@ -258,6 +266,14 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         galacticJourneyComplete: false,
         galacticCompletionDismissed: false,
         isPlaying: false,
+      };
+    case 'replay-solar':
+      return {
+        ...state,
+        currentTimeMs: state.startTimeMs,
+        journeyComplete: false,
+        journeyCompletionDismissed: false,
+        isPlaying: true,
       };
     case 'replay-galactic':
       return {
@@ -270,7 +286,11 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     case 'dismiss-completion':
       return state.frame === 'galaxy'
         ? { ...state, galacticCompletionDismissed: true, isPlaying: false }
-        : { ...state, isPlaying: false };
+        : {
+            ...state,
+            journeyCompletionDismissed: state.journeyComplete,
+            isPlaying: false,
+          };
     case 'set-frame':
       return action.frame === state.frame
         ? state
@@ -337,6 +357,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         isPlaying: false,
         currentTimeMs: state.startTimeMs,
         journeyComplete: false,
+        journeyCompletionDismissed: false,
         galacticElapsedMillionYears: 0,
         galacticSpeed: 5,
         galacticJourneyComplete: false,
@@ -370,6 +391,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         ...state,
         currentTimeMs: state.startTimeMs,
         journeyComplete: false,
+        journeyCompletionDismissed: false,
         galacticElapsedMillionYears: 0,
         galacticSpeed: 5,
         galacticJourneyComplete: false,
