@@ -48,6 +48,25 @@ test('enters the guided Galaxy Overview chapter paused and allows continuing wit
   await expect(page.getByText('Chapter 5 of 5')).toBeHidden();
 });
 
+test('replays the guided journey with Galactic elapsed time reset to its defaults', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Begin Journey' }).click();
+
+  for (let chapter = 2; chapter <= 5; chapter += 1) {
+    await page.getByRole('button', { name: 'Continue' }).click();
+  }
+  await page.getByLabel('Speed').selectOption('25');
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('42');
+  await page.getByRole('button', { name: 'Finish Journey' }).click();
+
+  await page.getByRole('button', { name: 'Replay Journey' }).click();
+  await expect(page.getByText('Chapter 1 of 5')).toBeVisible();
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+  await expect(page.getByText('0 million years', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Speed')).toHaveValue('5');
+  await expect(page.getByRole('button', { name: 'Play Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
+});
+
 test('supports keyboard playback and switching reference frames', async ({ page }) => {
   await page.goto('./');
   await page.getByRole('button', { name: 'Explore Freely' }).click();
@@ -154,6 +173,56 @@ test('adapts the shared timeline to paused Galactic elapsed time controls', asyn
   await expect(page.getByRole('button', { name: 'Pause Galactic Orbit' })).toHaveAttribute('aria-pressed', 'true');
 });
 
+test('preserves both clocks in session and restores Solar-System playback paused', async ({ page }) => {
+  await page.goto('./?date=2042-03-14T12%3A30%3A00.000Z&view=space&camera=path');
+  await page.getByLabel('Speed').selectOption('year');
+  const solarDate = await page.locator('#current-date').textContent();
+
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+  await page.getByLabel('Speed').selectOption('10');
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('80');
+  await page.getByRole('button', { name: 'Resume Galactic Orbit' }).click();
+  await page.waitForTimeout(350);
+  await page.getByRole('button', { name: 'Travel with Sun' }).click();
+
+  await expect(page.locator('#current-date')).toHaveText(solarDate ?? '');
+  await expect(page.getByLabel('Speed')).toHaveValue('year');
+  await expect(page.getByRole('button', { name: 'Play simulation' })).toHaveAttribute('aria-pressed', 'false');
+  await page.waitForTimeout(300);
+  await expect(page.locator('#current-date')).toHaveText(solarDate ?? '');
+
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+  const preservedGalacticTime = await page.getByLabel('Galactic elapsed time through one schematic orbit').inputValue();
+  expect(Number(preservedGalacticTime)).toBeGreaterThan(80);
+  await expect(page.getByLabel('Speed')).toHaveValue('10');
+  await expect(page.getByRole('button', { name: 'Resume Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
+  await page.waitForTimeout(300);
+  await expect(page.getByLabel('Galactic elapsed time through one schematic orbit')).toHaveValue(preservedGalacticTime);
+});
+
+test('omits Galactic progress from sharing and resets it on reload', async ({ page }) => {
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Explore Freely' }).click();
+  await page.getByRole('button', { name: 'Galaxy Overview' }).click();
+  await page.getByLabel('Speed').selectOption('25');
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('80');
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Reduce motion').check();
+  await page.getByRole('button', { name: 'Share this view' }).click();
+
+  const sharedUrl = new URL(page.url());
+  expect(sharedUrl.searchParams.has('galacticElapsedMillionYears')).toBe(false);
+  expect(sharedUrl.searchParams.has('galacticSpeed')).toBe(false);
+  const persistedValues = await page.evaluate(() => Object.values(window.localStorage));
+  expect(persistedValues.join(' ')).not.toMatch(/galactic/i);
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Galaxy Overview' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('0 million years', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Speed')).toHaveValue('5');
+  await expect(page.getByRole('button', { name: 'Play Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
+});
+
 test('moves the schematic Sun marker when Galactic elapsed time plays', async ({ page }) => {
   await page.goto('./');
   await page.getByRole('button', { name: 'Explore Freely' }).click();
@@ -171,6 +240,17 @@ test('moves the schematic Sun marker when Galactic elapsed time plays', async ({
   expect(before).not.toBeNull();
   expect(after).not.toBeNull();
   expect(Math.hypot((after?.x ?? 0) - (before?.x ?? 0), (after?.y ?? 0) - (before?.y ?? 0))).toBeGreaterThan(2);
+});
+
+test('shows Galactic completion when playback reaches one orbit', async ({ page }) => {
+  await page.goto('./?view=galaxy');
+  await page.getByLabel('Speed').selectOption('25');
+  await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('229');
+  await page.getByRole('button', { name: 'Resume Galactic Orbit' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Schematic orbit complete' })).toBeVisible();
+  await expect(page.getByText('Approximately 230 million years elapsed', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume Galactic Orbit' })).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('keeps the Sun anchored while Along the Path advances', async ({ page }) => {

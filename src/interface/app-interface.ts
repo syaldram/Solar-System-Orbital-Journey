@@ -150,6 +150,9 @@ export class AppInterface {
         : { type: 'return-today', today: new Date() });
     });
     element<HTMLButtonElement>('share-button').addEventListener('click', options.onShare);
+    element<HTMLButtonElement>('replay-journey').addEventListener('click', () => {
+      this.options.dispatch({ type: 'replay' });
+    });
     element<HTMLButtonElement>('tour-next').addEventListener('click', () => this.options.dispatch({ type: 'next-chapter' }));
     element<HTMLButtonElement>('tour-skip').addEventListener('click', () => this.options.dispatch({ type: 'skip-tour' }));
     element<HTMLButtonElement>('close-planet').addEventListener('click', () => this.options.dispatch({ type: 'select', body: null }));
@@ -290,6 +293,7 @@ export class AppInterface {
     this.selectedBody = state.selectedBody;
     this.planetCard.hidden = state.selectedBody === null || state.selectedBody === 'sun';
     this.renderTour(state);
+    element<HTMLButtonElement>('replay-journey').hidden = state.tour.status !== 'complete';
     const journeyComplete = isGalaxy ? state.galacticJourneyComplete : state.journeyComplete;
     this.completion.hidden = !journeyComplete || (isGalaxy && state.galacticCompletionDismissed);
     element<HTMLElement>('completion-kicker').textContent = isGalaxy ? 'Approximately 230 million years elapsed' : '165 Earth years later';
