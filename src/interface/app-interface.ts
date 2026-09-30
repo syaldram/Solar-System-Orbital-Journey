@@ -9,7 +9,7 @@ import type {
   ViewMode,
   ViewOptions,
 } from '../experience/experience-state';
-import { GALACTIC_PLAYBACK_SPEEDS } from '../experience/experience-state';
+import { GALACTIC_PLAYBACK_SPEEDS, getGalacticOrbitPresentation } from '../experience/experience-state';
 import { TOUR_CHAPTERS } from '../experience/tour';
 
 export interface PlanetCardDetails {
@@ -248,6 +248,26 @@ export class AppInterface {
     if (playIcon) playIcon.textContent = state.isPlaying ? 'Ⅱ' : '▶';
     element<HTMLSelectElement>('quality-select').value = state.quality;
     element<HTMLInputElement>('reduced-motion').checked = state.reducedMotion;
+
+    const galacticStatus = element<HTMLElement>('galactic-orbit-status');
+    galacticStatus.hidden = !isGalaxy;
+    const galacticPresentation = getGalacticOrbitPresentation(state);
+    const galacticPhase = element<HTMLElement>('galactic-orbit-phase');
+    galacticPhase.textContent = galacticPresentation.phase === 'present'
+      ? 'At present-location anchor'
+      : galacticPresentation.phase === 'complete'
+        ? 'Present anchor reached after one complete orbit'
+        : 'Schematic orbit in progress';
+    const galacticProgress = element<HTMLElement>('galactic-orbit-progress');
+    galacticProgress.setAttribute('aria-valuenow', String(galacticPresentation.progressPercent));
+    galacticProgress.setAttribute(
+      'aria-valuetext',
+      `${galacticPresentation.progressPercent}% of the schematic orbit completed`,
+    );
+    element<HTMLElement>('galactic-orbit-progress-fill').style.width = `${galacticPresentation.progressPercent}%`;
+    element<HTMLElement>('galactic-motion-treatment').textContent = state.reducedMotion
+      ? 'Decorative corona motion frozen; marker movement remains user-controlled.'
+      : 'Restrained corona motion uses presentation time, independent of orbit speed.';
 
     const pathMotionPanel = element<HTMLElement>('path-motion');
     pathMotionPanel.hidden = state.frame !== 'space' || state.cameraBookmark !== 'path';

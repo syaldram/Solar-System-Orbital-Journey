@@ -11,6 +11,7 @@ import {
 import {
   createInitialExperienceState,
   getAlongPathMotion,
+  getGalacticOrbitPresentation,
   updateExperience,
   type ExperienceAction,
   type ExperienceState,
@@ -237,6 +238,7 @@ function animate(now: number): void {
       new Date(state.startTimeMs),
       state.frame === 'sun' ? 'sun' : 'space',
     );
+    const galacticPresentation = getGalacticOrbitPresentation(state);
     scene.render(
       {
         snapshot,
@@ -252,7 +254,7 @@ function animate(now: number): void {
         trailRevision: state.trailRevision,
         journeyProgress: (state.currentTimeMs - state.startTimeMs) / (state.endTimeMs - state.startTimeMs),
         pathMotion: getAlongPathMotion(state),
-        galacticProgress: state.galacticElapsedMillionYears / state.galacticEndMillionYears,
+        galacticProgress: galacticPresentation.progress,
       },
       now,
     );
