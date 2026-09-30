@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { PLANET_IDS, getPlanetProfile } from '../astronomy/planet-data';
 import type { PlanetId, Vector3Au } from '../astronomy/solar-system';
@@ -16,20 +15,22 @@ import {
   AU_SCALE,
   FULL_JOURNEY_GROUP_SCALE,
   FULL_JOURNEY_LENGTH,
-  SUN_DISPLAY_RADIUS,
   planetDisplayRadius,
 } from './display-scale';
 import {
   createAtmosphereMaterial,
-  createCoronaTexture,
   createEarthCloudTexture,
-  createGalaxyTexture,
-  createGlowTexture,
   createRingTexture,
-  createSunMaterial,
   createUranusTexture,
   seededRandom,
 } from './procedural-materials';
+import { GalaxyPresentation } from './galaxy-presentation';
+import { PathGuidePresentation } from './path-guide-presentation';
+import { SceneLabels } from './scene-labels';
+import { SceneCameraController } from './scene-camera-controller';
+import { AdaptiveQualityMonitor } from './adaptive-quality-monitor';
+import { getRenderingQualityProfile } from './quality-profile';
+import { SolarPresentation } from './solar-presentation';
 
 export interface SceneState {
   readonly snapshot: SystemSnapshot;
@@ -57,16 +58,12 @@ export interface OrbitalSceneOptions {
   readonly onQualityAdapted: (quality: Exclude<QualityPreference, 'auto'>) => void;
 }
 
+interface RingPresentationMaterial {
+  readonly material: THREE.MeshStandardMaterial;
+  readonly fullOpacity: number;
+}
+
 const MAX_TRAIL_POINTS = 56;
-const CAMERA_TWEEN_DURATION_MS = 800;
-const MARKER_VISIBILITY_THRESHOLD_PX = 6;
-const GUIDE_NEAR_Z = -720;
-const GUIDE_FAR_Z = 240;
-const GUIDE_HALF_WIDTH = 92;
-const GUIDE_TICK_SPACING_AU = 20;
-const GUIDE_TICK_LABEL_COUNT = 6;
-const GUIDE_RAIL_X = [-92, -46, 0, 46, 92] as const;
-const REDUCED_GUIDE_STEP_MS = 450;
 
 function toSceneVector(position: Vector3Au, scale = AU_SCALE): THREE.Vector3 {
   return new THREE.Vector3(position.x * scale, position.z * scale, position.y * scale);
@@ -77,84 +74,37 @@ export class OrbitalScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(43, 1, 0.002, 5_000);
-  private readonly controls: OrbitControls;
+  private readonly cameraController: SceneCameraController;
   private readonly solarGroup = new THREE.Group();
-  private readonly galaxyGroup = new THREE.Group();
-  private readonly localGuides = new THREE.Group();
+  private readonly galaxyPresentation: GalaxyPresentation;
+  private readonly pathGuidePresentation: PathGuidePresentation;
   private readonly planetMeshes = new Map<PlanetId, THREE.Mesh>();
   private readonly planetTiltGroups = new Map<PlanetId, THREE.Group>();
   private readonly orbitLines = new Map<PlanetId, THREE.Line>();
   private readonly spaceOrbitLines = new Map<PlanetId, THREE.Line>();
   private readonly trailLines = new Map<PlanetId, THREE.Line>();
   private readonly trailHistory = new Map<PlanetId, Vector3Au[]>();
-  private readonly bodyMarkers = new Map<SelectableBody, HTMLButtonElement>();
-  private readonly markerScreenPositions = new Map<SelectableBody, THREE.Vector2>();
+  private readonly sceneLabels: SceneLabels;
   private readonly atmosphereMeshes = new Map<PlanetId, THREE.Mesh>();
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
-  private readonly sunMesh: THREE.Mesh;
-  private readonly sunMaterial: THREE.ShaderMaterial;
-  private readonly sunGlow: THREE.Sprite;
-  private readonly sunCoronaLayers: readonly THREE.Sprite[];
+  private readonly solarPresentation: SolarPresentation;
   private readonly planeOverlay: THREE.Mesh;
-  private readonly coordinateGuides: THREE.LineSegments;
-  private readonly depthMarkers: THREE.Points;
-  private readonly localPath: THREE.Line;
-  private readonly fullJourneyPath: THREE.Line;
-  private readonly galaxySunMarker: THREE.Mesh;
-  private readonly galaxySunCorona: THREE.Sprite;
-  private readonly galaxyDirectionArrow: THREE.ArrowHelper;
-  private readonly galaxyOrbitProgress: THREE.Line;
   private readonly starField: THREE.Points;
-  private readonly galaxyStars: THREE.Points;
-  private readonly galaxyDiskMaterials: readonly THREE.MeshBasicMaterial[];
   private readonly earthClouds: THREE.Mesh | null;
-  private readonly ringMaterials: readonly THREE.MeshStandardMaterial[];
-  private readonly solarSystemLabel: HTMLDivElement;
-  private readonly galaxyCenterLabel: HTMLDivElement;
-  private readonly pathTickLabels: readonly HTMLDivElement[];
-  private readonly pathTickPositions: THREE.Vector3[] = [];
-  private readonly labelLayer: HTMLElement;
+  private readonly ringMaterials: readonly RingPresentationMaterial[];
   private readonly onSelect: (body: SelectableBody) => void;
   private readonly onQualityAdapted: (quality: Exclude<QualityPreference, 'auto'>) => void;
+  private readonly qualityMonitor = new AdaptiveQualityMonitor();
   private readonly assetBase: string;
   private currentState: SceneState | null = null;
-  private currentBookmark: CameraBookmark | null = null;
-  private currentFrame: ViewMode | null = null;
-  private currentCameraRevision = -1;
   private lastTrailRevision = -1;
   private lastTrailSampleMs = 0;
   private selectedOutline: THREE.Mesh | null = null;
   private outlinedBody: PlanetId | null = null;
   private appliedQualityKey: string | null = null;
-  private cameraTween: {
-    start: THREE.Vector3;
-    end: THREE.Vector3;
-    startTarget: THREE.Vector3;
-    endTarget: THREE.Vector3;
-    startedAt: number;
-    source: 'composition' | 'command' | 'follow';
-  } | null = null;
-  private frameSamples: number[] = [];
-  private lastFrameAt = performance.now();
-  private autoQualityAdapted = false;
-  private followedPlanet: PlanetId | null = null;
-  private lastFollowPosition: THREE.Vector3 | null = null;
-  private pendingFocus: {
-    readonly body: SelectableBody;
-    readonly source: 'command' | 'follow';
-  } | null = null;
-  private hoveredBody: SelectableBody | null = null;
-  private sunSurfaceTime = 0;
-  private lastSunAnimationAt = performance.now();
-  private galaxyCoronaTime = 0;
-  private displayedGuideDistanceAu: number | null = null;
-  private previousGuideTargetAu: number | null = null;
-  private lastGuideAnimationAt = performance.now();
-  private lastReducedGuideStepAt = 0;
 
   constructor(options: OrbitalSceneOptions) {
-    this.labelLayer = options.labelLayer;
     this.onSelect = options.onSelect;
     this.onQualityAdapted = options.onQualityAdapted;
     this.assetBase = options.assetBase;
@@ -170,70 +120,24 @@ export class OrbitalScene {
     this.renderer.setClearColor(0x02040a, 1);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    this.camera.position.set(10, 24, 65);
-    this.controls = new OrbitControls(this.camera, options.canvas);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.055;
-    this.controls.minDistance = 0.025;
-    this.controls.maxDistance = 2_500;
-    this.controls.enablePan = true;
-    this.controls.addEventListener('start', () => {
-      this.cameraTween = null;
-    });
-
-    this.scene.add(this.solarGroup, this.localGuides, this.galaxyGroup);
+    this.galaxyPresentation = new GalaxyPresentation();
+    this.pathGuidePresentation = new PathGuidePresentation(options.labelLayer);
+    this.scene.add(this.solarGroup, this.pathGuidePresentation.root, this.galaxyPresentation.root);
     this.starField = this.createStarField();
     this.scene.add(this.starField);
 
     const ambient = new THREE.AmbientLight(0x53617a, 0.16);
     this.scene.add(ambient);
 
-    const sunGeometry = new THREE.SphereGeometry(SUN_DISPLAY_RADIUS, 64, 40);
-    this.sunMaterial = createSunMaterial();
-    this.sunMesh = new THREE.Mesh(sunGeometry, this.sunMaterial);
-    this.sunMesh.name = 'sun';
-    this.solarGroup.add(this.sunMesh);
-
-    const coronaColors = [0xffd69b, 0xffaa5a, 0xff7d3a] as const;
-    const coronaScales = [7.2, 8.7, 10.2] as const;
-    this.sunCoronaLayers = coronaScales.map((scale, index) => {
-      const material = new THREE.SpriteMaterial({
-        map: createCoronaTexture(index),
-        color: coronaColors[index],
-        opacity: 0.58 - index * 0.12,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        depthTest: false,
-        rotation: (index - 1) * 0.31,
-      });
-      material.userData.baseOpacity = material.opacity;
-      material.userData.baseRotation = material.rotation;
-      const corona = new THREE.Sprite(material);
-      corona.scale.set(SUN_DISPLAY_RADIUS * scale, SUN_DISPLAY_RADIUS * scale, 1);
-      corona.userData.baseScale = SUN_DISPLAY_RADIUS * scale;
-      corona.userData.driftRate = [0.012, -0.008, 0.005][index] ?? 0;
-      corona.userData.breathPhase = index * 1.9;
-      this.solarGroup.add(corona);
-      return corona;
-    });
-
-    const glowMaterial = new THREE.SpriteMaterial({
-      map: createGlowTexture(),
-      color: 0xffb55c,
-      transparent: true,
-      opacity: 0.72,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    this.sunGlow = new THREE.Sprite(glowMaterial);
-    this.sunGlow.scale.set(SUN_DISPLAY_RADIUS * 6.2, SUN_DISPLAY_RADIUS * 6.2, 1);
-    this.solarGroup.add(this.sunGlow);
-
-    const sunlight = new THREE.PointLight(0xffe4b4, 1150, 0, 1.45);
-    this.solarGroup.add(sunlight);
+    this.solarPresentation = new SolarPresentation(this.solarGroup);
 
     for (const id of PLANET_IDS) this.createPlanet(id);
+    this.cameraController = new SceneCameraController(
+      this.camera,
+      options.canvas,
+      this.solarPresentation.mesh,
+      this.planetMeshes,
+    );
     this.ringMaterials = this.addRings();
     this.earthClouds = this.addEarthClouds();
 
@@ -250,80 +154,15 @@ export class OrbitalScene {
     this.planeOverlay.rotation.x = -Math.PI / 2;
     this.solarGroup.add(this.planeOverlay);
 
-    this.coordinateGuides = new THREE.LineSegments(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: 0x4d8ca2, opacity: 0.22, transparent: true }),
-    );
-    this.coordinateGuides.frustumCulled = false;
-    this.depthMarkers = new THREE.Points(
-      new THREE.BufferGeometry(),
-      new THREE.PointsMaterial({
-        color: 0x75d7e8,
-        size: 0.75,
-        transparent: true,
-        opacity: 0.42,
-        sizeAttenuation: true,
-        depthWrite: false,
-      }),
-    );
-    this.depthMarkers.frustumCulled = false;
-    this.localGuides.add(this.coordinateGuides, this.depthMarkers);
-
-    this.localPath = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, -150),
-        new THREE.Vector3(0, 0, 150),
-      ]),
-      new THREE.LineDashedMaterial({ color: 0xf4b860, opacity: 0.62, transparent: true, dashSize: 4, gapSize: 3 }),
-    );
-    this.localPath.computeLineDistances();
-    this.localGuides.add(this.localPath);
-
-    this.fullJourneyPath = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, -FULL_JOURNEY_LENGTH / 2),
-        new THREE.Vector3(0, 0, FULL_JOURNEY_LENGTH / 2),
-      ]),
-      new THREE.LineBasicMaterial({ color: 0xf4b860, opacity: 0.5, transparent: true }),
-    );
-    this.localGuides.add(this.fullJourneyPath);
-
-    const galaxy = this.createGalaxy();
-    this.galaxyStars = galaxy.stars;
-    this.galaxySunMarker = galaxy.sunMarker;
-    this.galaxySunCorona = galaxy.sunCorona;
-    this.galaxyDirectionArrow = galaxy.directionArrow;
-    this.galaxyOrbitProgress = galaxy.orbitProgress;
-    this.galaxyDiskMaterials = galaxy.diskMaterials;
-    this.galaxyGroup.add(galaxy.root);
-
-    this.createBodyMarker('sun', 'Sun');
-    for (const id of PLANET_IDS) this.createBodyMarker(id, getPlanetProfile(id).name);
-    this.solarSystemLabel = document.createElement('div');
-    this.solarSystemLabel.className = 'solar-system-label';
-    this.solarSystemLabel.textContent = 'Solar System';
-    this.solarSystemLabel.setAttribute('role', 'note');
-    this.solarSystemLabel.hidden = true;
-    this.labelLayer.append(this.solarSystemLabel);
-    this.galaxyCenterLabel = document.createElement('div');
-    this.galaxyCenterLabel.className = 'galaxy-center-label';
-    this.galaxyCenterLabel.textContent = 'Galactic center';
-    this.galaxyCenterLabel.setAttribute('role', 'note');
-    this.galaxyCenterLabel.hidden = true;
-    this.labelLayer.append(this.galaxyCenterLabel);
-    this.pathTickLabels = Array.from({ length: GUIDE_TICK_LABEL_COUNT }, () => {
-      const label = document.createElement('div');
-      label.className = 'path-distance-tick';
-      label.setAttribute('aria-hidden', 'true');
-      label.hidden = true;
-      this.labelLayer.append(label);
-      return label;
-    });
-
+    this.sceneLabels = new SceneLabels(options.labelLayer, {
+      sun: this.solarPresentation.mesh,
+      solarGroup: this.solarGroup,
+      galaxyRoot: this.galaxyPresentation.root,
+      galaxySun: this.galaxyPresentation.sunMarker,
+      planets: this.planetMeshes,
+    }, options.onSelect);
     options.canvas.addEventListener('pointermove', (event) => this.handlePointerMove(event));
-    options.canvas.addEventListener('pointerleave', () => {
-      this.hoveredBody = null;
-    });
+    options.canvas.addEventListener('pointerleave', () => this.sceneLabels.clearHover());
     options.canvas.addEventListener('pointerup', (event) => this.handlePointer(event));
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -361,28 +200,40 @@ export class OrbitalScene {
 
   render(state: SceneState, nowMs: number): void {
     this.currentState = state;
-    this.syncFollowState(state.followedPlanet);
     this.applyView(state);
-    this.applyCamera(state, nowMs);
-    this.applyPendingFocus(nowMs);
-    this.updateCameraTween(state.reducedMotion, nowMs);
-    this.applyFollow(state.followedPlanet, state.frame);
-    this.controls.update();
-    this.updatePathGuides(state, nowMs);
-    this.updateSunSurface(state.reducedMotion, nowMs);
+    this.cameraController.render(state, nowMs);
+    this.pathGuidePresentation.render({
+      frame: state.frame,
+      bookmark: state.bookmark,
+      journeyProgress: state.journeyProgress,
+      motion: state.pathMotion,
+      quality: getRenderingQualityProfile(state.quality),
+    }, nowMs);
+    this.solarPresentation.render({
+      nowMs,
+      reducedMotion: state.reducedMotion,
+      visible: state.frame !== 'galaxy',
+      quality: getRenderingQualityProfile(state.quality),
+    });
+    this.galaxyPresentation.render({
+      nowMs,
+      progress: state.galacticProgress,
+      reducedMotion: state.reducedMotion,
+      visible: state.frame === 'galaxy',
+      quality: getRenderingQualityProfile(state.quality),
+    });
     this.updateLabels(state);
     this.renderer.render(this.scene, this.camera);
-    this.monitorPerformance(state.quality, nowMs);
+    const adaptedQuality = this.qualityMonitor.sample(state.quality, nowMs);
+    if (adaptedQuality) this.onQualityAdapted(adaptedQuality);
   }
 
   focus(body: SelectableBody): void {
-    this.pendingFocus = { body, source: 'command' };
+    this.cameraController.focus(body);
   }
 
   resetCamera(): void {
-    this.lastFollowPosition = null;
-    this.pendingFocus = null;
-    this.currentCameraRevision = -1;
+    this.cameraController.reset();
   }
 
   resize(): void {
@@ -439,8 +290,8 @@ export class OrbitalScene {
     this.solarGroup.add(trail);
   }
 
-  private addRings(): readonly THREE.MeshStandardMaterial[] {
-    const materials: THREE.MeshStandardMaterial[] = [];
+  private addRings(): readonly RingPresentationMaterial[] {
+    const materials: RingPresentationMaterial[] = [];
     const saturn = this.planetMeshes.get('saturn');
     if (saturn) {
       const radius = planetDisplayRadius('saturn');
@@ -460,8 +311,7 @@ export class OrbitalScene {
       );
       ring.rotation.x = Math.PI / 2;
       saturn.add(ring);
-      material.userData.baseOpacity = 0.86;
-      materials.push(material);
+      materials.push({ material, fullOpacity: 0.86 });
     }
     const uranus = this.planetMeshes.get('uranus');
     if (uranus) {
@@ -482,8 +332,7 @@ export class OrbitalScene {
       );
       ring.rotation.x = Math.PI / 2;
       uranus.add(ring);
-      material.userData.baseOpacity = 0.5;
-      materials.push(material);
+      materials.push({ material, fullOpacity: 0.5 });
     }
     return materials;
   }
@@ -528,148 +377,6 @@ export class OrbitalScene {
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     const material = new THREE.PointsMaterial({ size: 1.2, vertexColors: true, transparent: true, opacity: 0.72, sizeAttenuation: true, depthWrite: false });
     return new THREE.Points(geometry, material);
-  }
-
-  private createGalaxy(): {
-    root: THREE.Group;
-    stars: THREE.Points;
-    sunMarker: THREE.Mesh;
-    sunCorona: THREE.Sprite;
-    directionArrow: THREE.ArrowHelper;
-    orbitProgress: THREE.Line;
-    diskMaterials: readonly THREE.MeshBasicMaterial[];
-  } {
-    const root = new THREE.Group();
-    const galaxyTexture = createGalaxyTexture();
-    const primaryDiskMaterial = new THREE.MeshBasicMaterial({
-      map: galaxyTexture,
-      transparent: true,
-      opacity: 0.92,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
-    const hazeMaterial = new THREE.MeshBasicMaterial({
-      map: galaxyTexture,
-      transparent: true,
-      opacity: 0.22,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-    });
-    const disk = new THREE.Mesh(new THREE.PlaneGeometry(215, 215), primaryDiskMaterial);
-    disk.rotation.x = -Math.PI / 2;
-    const haze = new THREE.Mesh(new THREE.PlaneGeometry(230, 230), hazeMaterial);
-    haze.rotation.x = -Math.PI / 2;
-    haze.position.y = -0.7;
-    haze.scale.set(1, 1.08, 1);
-    root.add(disk, haze);
-
-    const random = seededRandom(8_111_995);
-    const count = 1_200;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    for (let index = 0; index < count; index += 1) {
-      const arm = index % 2;
-      const radius = Math.pow(random(), 0.62) * 100;
-      const baseAngle = arm * Math.PI + radius * 0.067;
-      const scatter = (random() - 0.5) * (0.3 + radius * 0.012);
-      const angle = baseAngle + scatter;
-      const thickness = (random() - 0.5) * Math.max(0.4, 5.5 - radius * 0.045);
-      positions[index * 3] = Math.cos(angle) * radius;
-      positions[index * 3 + 1] = thickness;
-      positions[index * 3 + 2] = Math.sin(angle) * radius;
-      const core = 1 - Math.min(1, radius / 100);
-      colors[index * 3] = 0.56 + core * 0.44;
-      colors[index * 3 + 1] = 0.68 + core * 0.2;
-      colors[index * 3 + 2] = 0.98 - core * 0.2;
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const stars = new THREE.Points(
-      geometry,
-      new THREE.PointsMaterial({ size: 0.42, vertexColors: true, transparent: true, opacity: 0.52, depthWrite: false, blending: THREE.AdditiveBlending }),
-    );
-    root.add(stars);
-
-    const orbitPoints = Array.from({ length: 361 }, (_, index) => {
-      const angle = (index / 360) * Math.PI * 2;
-      return new THREE.Vector3(Math.cos(angle) * 65, 0, Math.sin(angle) * 65);
-    });
-    const orbit = new THREE.LineLoop(
-      new THREE.BufferGeometry().setFromPoints(orbitPoints),
-      new THREE.LineDashedMaterial({ color: 0xf4b860, opacity: 0.32, transparent: true, dashSize: 2, gapSize: 1.7 }),
-    );
-    orbit.computeLineDistances();
-    root.add(orbit);
-
-    const orbitProgress = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(orbitPoints),
-      new THREE.LineBasicMaterial({
-        color: 0xffcf7b,
-        opacity: 0.92,
-        transparent: true,
-        depthWrite: false,
-      }),
-    );
-    orbitProgress.geometry.setDrawRange(0, 0);
-    orbitProgress.visible = false;
-    root.add(orbitProgress);
-
-    const sunMarker = new THREE.Mesh(
-      new THREE.SphereGeometry(1.05, 24, 12),
-      new THREE.MeshBasicMaterial({ color: 0xffcf7b }),
-    );
-    sunMarker.position.set(65, 0, 0);
-    const coronaMaterial = new THREE.SpriteMaterial({
-      map: createGlowTexture(),
-      color: 0xffb55c,
-      opacity: 0.58,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const sunCorona = new THREE.Sprite(coronaMaterial);
-    sunCorona.scale.set(7, 7, 1);
-    sunCorona.userData.baseScale = 7;
-    sunCorona.userData.baseOpacity = 0.58;
-    sunMarker.add(sunCorona);
-    root.add(sunMarker);
-    const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(65, 0, 0), 8, 0xf4b860, 2.2, 1.2);
-    root.add(arrow);
-    return {
-      root,
-      stars,
-      sunMarker,
-      sunCorona,
-      directionArrow: arrow,
-      orbitProgress,
-      diskMaterials: [primaryDiskMaterial, hazeMaterial],
-    };
-  }
-
-  private createBodyMarker(id: SelectableBody, text: string): void {
-    const marker = document.createElement('button');
-    marker.type = 'button';
-    marker.className = 'body-marker';
-    marker.setAttribute('aria-label', `Select ${text}`);
-    marker.dataset.body = id;
-    const markerColor = id === 'sun' ? 0xffcf7b : getPlanetProfile(id).color;
-    marker.style.setProperty('--body-color', `#${markerColor.toString(16).padStart(6, '0')}`);
-    const leader = document.createElement('span');
-    leader.className = 'body-marker__leader';
-    leader.setAttribute('aria-hidden', 'true');
-    leader.hidden = true;
-    const ring = document.createElement('span');
-    ring.className = 'body-marker__ring';
-    ring.setAttribute('aria-hidden', 'true');
-    const name = document.createElement('span');
-    name.className = 'body-marker__name';
-    name.textContent = text;
-    marker.append(leader, ring, name);
-    marker.addEventListener('click', () => this.onSelect(id));
-    this.labelLayer.append(marker);
-    this.bodyMarkers.set(id, marker);
   }
 
   private loadTextures(): void {
@@ -723,12 +430,6 @@ export class OrbitalScene {
     const isGalaxy = state.frame === 'galaxy';
     const isFullJourney = state.frame === 'space' && state.bookmark === 'full';
     this.solarGroup.visible = !isGalaxy;
-    this.localGuides.visible = state.frame === 'space';
-    this.galaxyGroup.visible = isGalaxy;
-    this.localPath.visible = state.frame === 'space' && !isFullJourney;
-    this.coordinateGuides.visible = state.frame === 'space' && !isFullJourney;
-    this.depthMarkers.visible = state.frame === 'space' && !isFullJourney;
-    this.fullJourneyPath.visible = isFullJourney;
     this.planeOverlay.visible = state.viewOptions.planeOverlays && !isFullJourney;
 
     const positions = new Map(state.snapshot.planets.map(({ id, position }) => [id, position]));
@@ -746,19 +447,6 @@ export class OrbitalScene {
       mesh.visible = !isGalaxy;
     }
 
-    this.sunMesh.visible = !isGalaxy;
-    this.sunGlow.visible = !isGalaxy;
-    if (isGalaxy) {
-      const progress = Math.min(1, Math.max(0, state.galacticProgress));
-      const angle = progress * Math.PI * 2;
-      const markerPosition = new THREE.Vector3(Math.cos(angle) * 65, 0, Math.sin(angle) * 65);
-      this.galaxySunMarker.position.copy(markerPosition);
-      this.galaxyDirectionArrow.position.copy(markerPosition);
-      this.galaxyDirectionArrow.setDirection(new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle)));
-      this.galaxyOrbitProgress.visible = progress > 0;
-      this.galaxyOrbitProgress.geometry.setDrawRange(0, Math.floor(progress * 360) + 1);
-    }
-    this.localGuides.position.set(0, 0, 0);
     if (isFullJourney) {
       const journeyPosition = -FULL_JOURNEY_LENGTH / 2 + state.journeyProgress * FULL_JOURNEY_LENGTH;
       this.solarGroup.scale.setScalar(FULL_JOURNEY_GROUP_SCALE);
@@ -776,37 +464,6 @@ export class OrbitalScene {
     this.updateTrails(state, positions, sunPosition);
     this.updateSelection(state.selectedBody);
     this.applyQuality(state.quality, state.frame);
-    this.applyControlConstraints(state.frame);
-  }
-
-  private applyFollow(planet: PlanetId | null, frame: ViewMode): void {
-    if (!planet || frame === 'galaxy') return;
-    const object = this.planetMeshes.get(planet);
-    if (!object?.visible) return;
-    const current = new THREE.Vector3();
-    object.getWorldPosition(current);
-    if (this.cameraTween) {
-      this.lastFollowPosition = current;
-      return;
-    }
-    if (this.lastFollowPosition) {
-      const delta = current.clone().sub(this.lastFollowPosition);
-      this.camera.position.add(delta);
-    }
-    this.controls.target.copy(current);
-    this.lastFollowPosition = current;
-  }
-
-  private syncFollowState(planet: PlanetId | null): void {
-    if (planet === this.followedPlanet) return;
-    if (planet === null) {
-      if (this.pendingFocus?.source === 'follow') this.pendingFocus = null;
-      if (this.cameraTween?.source === 'follow') this.cameraTween = null;
-    } else {
-      this.pendingFocus = { body: planet, source: 'follow' };
-    }
-    this.followedPlanet = planet;
-    this.lastFollowPosition = null;
   }
 
   private updateTrails(state: SceneState, positions: Map<PlanetId, Vector3Au>, sun: Vector3Au): void {
@@ -843,104 +500,6 @@ export class OrbitalScene {
     }
   }
 
-  private updatePathGuides(state: SceneState, nowMs: number): void {
-    const active = state.frame === 'space' && state.bookmark !== 'full';
-    if (!active) {
-      this.displayedGuideDistanceAu = null;
-      this.previousGuideTargetAu = null;
-      this.lastGuideAnimationAt = nowMs;
-      this.pathTickPositions.length = 0;
-      for (const label of this.pathTickLabels) label.hidden = true;
-      return;
-    }
-
-    const targetAu = state.pathMotion.distanceAu;
-    const elapsedSeconds = Math.min(0.1, Math.max(0, (nowMs - this.lastGuideAnimationAt) / 1_000));
-    this.lastGuideAnimationAt = nowMs;
-    if (this.displayedGuideDistanceAu === null) {
-      this.displayedGuideDistanceAu = targetAu;
-    } else if (!state.pathMotion.isPlaying && this.previousGuideTargetAu !== targetAu) {
-      if (state.journeyProgress >= 1) {
-        const maximumChange = state.pathMotion.apparentGuideAuPerSecond * elapsedSeconds;
-        const remaining = targetAu - this.displayedGuideDistanceAu;
-        this.displayedGuideDistanceAu += Math.sign(remaining) * Math.min(Math.abs(remaining), maximumChange);
-      } else {
-        this.displayedGuideDistanceAu = targetAu;
-      }
-    } else if (state.pathMotion.isPlaying) {
-      const reducedStepDue = nowMs - this.lastReducedGuideStepAt >= REDUCED_GUIDE_STEP_MS;
-      if (state.pathMotion.guideFlow !== 'stepped' || reducedStepDue) {
-        const flowSeconds = state.pathMotion.guideFlow === 'stepped'
-          ? REDUCED_GUIDE_STEP_MS / 1_000
-          : elapsedSeconds;
-        const maximumChange = state.pathMotion.apparentGuideAuPerSecond * flowSeconds;
-        const remaining = targetAu - this.displayedGuideDistanceAu;
-        this.displayedGuideDistanceAu += Math.sign(remaining) * Math.min(Math.abs(remaining), maximumChange);
-        if (state.pathMotion.guideFlow === 'stepped') this.lastReducedGuideStepAt = nowMs;
-      }
-    }
-    this.previousGuideTargetAu = targetAu;
-    this.rebuildPathGuides(this.displayedGuideDistanceAu, state);
-  }
-
-  private rebuildPathGuides(displayedDistanceAu: number, state: SceneState): void {
-    const linePositions: number[] = [];
-    for (const x of GUIDE_RAIL_X) {
-      linePositions.push(x, -10, GUIDE_NEAR_Z, x, -10, GUIDE_FAR_Z);
-    }
-
-    const firstVisibleDistanceAu = Math.max(0, displayedDistanceAu - GUIDE_FAR_Z / AU_SCALE);
-    const lastVisibleDistanceAu = displayedDistanceAu - GUIDE_NEAR_Z / AU_SCALE;
-    const firstTickAu = Math.ceil(firstVisibleDistanceAu / GUIDE_TICK_SPACING_AU) * GUIDE_TICK_SPACING_AU;
-    this.pathTickPositions.length = 0;
-    let labelIndex = 0;
-    for (let tickAu = firstTickAu; tickAu <= lastVisibleDistanceAu; tickAu += GUIDE_TICK_SPACING_AU) {
-      const z = (displayedDistanceAu - tickAu) * AU_SCALE;
-      linePositions.push(-GUIDE_HALF_WIDTH, -10, z, GUIDE_HALF_WIDTH, -10, z);
-      linePositions.push(-GUIDE_HALF_WIDTH, -10, z, -GUIDE_HALF_WIDTH, -3, z);
-      if (labelIndex < this.pathTickLabels.length) {
-        const label = this.pathTickLabels[labelIndex];
-        if (label) {
-          label.textContent = `${Math.round(tickAu).toLocaleString('en')} AU`;
-          label.hidden = false;
-          this.pathTickPositions.push(new THREE.Vector3(-GUIDE_HALF_WIDTH, -2, z));
-        }
-        labelIndex += 1;
-      }
-    }
-    for (let index = labelIndex; index < this.pathTickLabels.length; index += 1) {
-      const label = this.pathTickLabels[index];
-      if (label) label.hidden = true;
-    }
-    this.coordinateGuides.geometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(linePositions, 3),
-    );
-
-    const quality = state.quality === 'auto' ? 'high' : state.quality;
-    const baseMarkerSpacingAu = quality === 'high' ? 4 : quality === 'balanced' ? 7 : 12;
-    const markerSpacingAu = baseMarkerSpacingAu
-      * (state.pathMotion.guideFlow === 'stabilized' ? 1.6 : state.pathMotion.guideFlow === 'stepped' ? 2.4 : 1);
-    const firstMarkerIndex = Math.floor(firstVisibleDistanceAu / markerSpacingAu) - 1;
-    const markerPositions: number[] = [];
-    for (let index = firstMarkerIndex; ; index += 1) {
-      const markerDistanceAu = index * markerSpacingAu;
-      const z = (displayedDistanceAu - markerDistanceAu) * AU_SCALE;
-      if (z < GUIDE_NEAR_Z) break;
-      if (z > GUIDE_FAR_Z) continue;
-      const horizontalSeed = Math.sin(index * 12.9898 + 4.1414) * 43_758.5453;
-      const verticalSeed = Math.sin(index * 78.233 + 1.732) * 12_345.6789;
-      const horizontalUnit = horizontalSeed - Math.floor(horizontalSeed);
-      const verticalUnit = verticalSeed - Math.floor(verticalSeed);
-      const side = index % 2 === 0 ? 1 : -1;
-      markerPositions.push(side * (28 + horizontalUnit * 88), -46 + verticalUnit * 86, z);
-    }
-    this.depthMarkers.geometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(markerPositions, 3),
-    );
-  }
-
   private updateSelection(selected: SelectableBody | null): void {
     const nextOutlinedBody = selected && selected !== 'sun' && this.currentState?.frame !== 'galaxy'
       ? selected
@@ -965,234 +524,24 @@ export class OrbitalScene {
   private updateLabels(state: SceneState): void {
     const width = this.renderer.domElement.clientWidth;
     const height = this.renderer.domElement.clientHeight;
-    const isFullJourney = state.frame === 'space' && state.bookmark === 'full';
-    const fullSunScreen = new THREE.Vector2();
-    if (isFullJourney) {
-      const sunWorld = new THREE.Vector3();
-      this.sunMesh.getWorldPosition(sunWorld);
-      sunWorld.project(this.camera);
-      fullSunScreen.set((sunWorld.x * 0.5 + 0.5) * width, (-sunWorld.y * 0.5 + 0.5) * height);
-    }
-    this.markerScreenPositions.clear();
-    for (const [id, marker] of this.bodyMarkers) {
-      const object = id === 'sun' && state.frame === 'galaxy'
-        ? this.galaxySunMarker
-        : id === 'sun'
-          ? this.sunMesh
-          : this.planetMeshes.get(id);
-      const available = Boolean(object?.visible) && (state.frame !== 'galaxy' || id === 'sun');
-      marker.hidden = !available;
-      if (!object || !available) continue;
-
-      const world = new THREE.Vector3();
-      object.getWorldPosition(world);
-      const projected = world.clone().project(this.camera);
-      const behind = projected.z < -1 || projected.z > 1;
-      marker.hidden = behind;
-      if (behind) continue;
-
-      const actualX = (projected.x * 0.5 + 0.5) * width;
-      const actualY = (-projected.y * 0.5 + 0.5) * height;
-      let x = actualX;
-      let y = actualY;
-      const leader = marker.querySelector<HTMLElement>('.body-marker__leader');
-      if (isFullJourney && id !== 'sun') {
-        const index = PLANET_IDS.indexOf(id);
-        const actualDelta = new THREE.Vector2(actualX - fullSunScreen.x, actualY - fullSunScreen.y);
-        const fallbackAngle = (index / PLANET_IDS.length) * Math.PI * 2 - Math.PI / 2;
-        const direction = actualDelta.lengthSq() > 0.01
-          ? actualDelta.normalize()
-          : new THREE.Vector2(Math.cos(fallbackAngle), Math.sin(fallbackAngle));
-        const minimumDistance = 27 + index * 4.5;
-        const displayDistance = Math.max(minimumDistance, Math.hypot(actualX - fullSunScreen.x, actualY - fullSunScreen.y));
-        x = fullSunScreen.x + direction.x * displayDistance;
-        y = fullSunScreen.y + direction.y * displayDistance;
-        if (leader) {
-          const backX = actualX - x;
-          const backY = actualY - y;
-          leader.hidden = false;
-          leader.style.width = `${Math.hypot(backX, backY)}px`;
-          leader.style.transform = `rotate(${Math.atan2(backY, backX)}rad)`;
-        }
-      } else if (leader) {
-        leader.hidden = true;
-      }
-      const localRadius = id === 'sun'
-        ? state.frame === 'galaxy' ? 1.05 : SUN_DISPLAY_RADIUS
-        : planetDisplayRadius(id);
-      const worldScale = new THREE.Vector3();
-      object.getWorldScale(worldScale);
-      const worldRadius = localRadius * Math.max(worldScale.x, worldScale.y, worldScale.z);
-      const distance = Math.max(0.0001, this.camera.position.distanceTo(world));
-      const pixelsPerWorldUnit = height / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * distance);
-      const projectedRadius = worldRadius * pixelsPerWorldUnit;
-      const revealOnly = (isFullJourney && id !== 'sun')
-        || (this.camera.position.distanceTo(this.controls.target) > 180 && ['mercury', 'venus', 'earth', 'mars'].includes(id));
-
-      marker.style.left = `${x}px`;
-      marker.style.top = `${y}px`;
-      marker.dataset.markerVisible = String(projectedRadius < MARKER_VISIBILITY_THRESHOLD_PX || isFullJourney || state.frame === 'galaxy');
-      const labelEnabled = state.viewOptions.labels || (isFullJourney && id === 'sun');
-      marker.dataset.labelMode = !labelEnabled ? 'hidden' : revealOnly ? 'reveal' : 'persistent';
-      marker.dataset.hovered = String(this.hoveredBody === id);
-      marker.setAttribute('aria-current', String(state.selectedBody === id));
-      this.markerScreenPositions.set(id, new THREE.Vector2(x, y));
-    }
-
-    this.solarSystemLabel.hidden = !isFullJourney;
-    if (isFullJourney) {
-      const solarSystemPosition = new THREE.Vector3();
-      this.solarGroup.getWorldPosition(solarSystemPosition);
-      solarSystemPosition.project(this.camera);
-      const behind = solarSystemPosition.z < -1 || solarSystemPosition.z > 1;
-      this.solarSystemLabel.hidden = behind;
-      if (!behind) {
-        this.solarSystemLabel.style.left = `${(solarSystemPosition.x * 0.5 + 0.5) * width}px`;
-        this.solarSystemLabel.style.top = `${(-solarSystemPosition.y * 0.5 + 0.5) * height - 34}px`;
-      }
-    }
-
-    this.galaxyCenterLabel.hidden = state.frame !== 'galaxy';
-    if (state.frame === 'galaxy') {
-      const galacticCenter = new THREE.Vector3();
-      this.galaxyGroup.getWorldPosition(galacticCenter);
-      galacticCenter.project(this.camera);
-      const behind = galacticCenter.z < -1 || galacticCenter.z > 1;
-      this.galaxyCenterLabel.hidden = behind;
-      if (!behind) {
-        this.galaxyCenterLabel.style.left = `${(galacticCenter.x * 0.5 + 0.5) * width}px`;
-        this.galaxyCenterLabel.style.top = `${(-galacticCenter.y * 0.5 + 0.5) * height}px`;
-      }
-    }
-
-    const showPathTicks = state.frame === 'space' && state.bookmark === 'path';
-    for (let index = 0; index < this.pathTickLabels.length; index += 1) {
-      const label = this.pathTickLabels[index];
-      const position = this.pathTickPositions[index];
-      if (!label || !position || !showPathTicks) {
-        if (label) label.hidden = true;
-        continue;
-      }
-      const projected = position.clone().project(this.camera);
-      const behind = projected.z < -1 || projected.z > 1;
-      const x = (projected.x * 0.5 + 0.5) * width;
-      const y = (-projected.y * 0.5 + 0.5) * height;
-      const offscreen = x < 0 || x > width || y < 0 || y > height;
-      label.hidden = behind || offscreen;
-      if (!label.hidden) {
-        label.style.left = `${x}px`;
-        label.style.top = `${y}px`;
-      }
-    }
-  }
-
-  private applyCamera(state: SceneState, nowMs: number): void {
-    if (
-      state.bookmark === this.currentBookmark
-      && state.frame === this.currentFrame
-      && state.cameraRevision === this.currentCameraRevision
-    ) return;
-    const isInitialComposition = this.currentFrame === null;
-    this.currentBookmark = state.bookmark;
-    this.currentFrame = state.frame;
-    this.currentCameraRevision = state.cameraRevision;
-    let position = new THREE.Vector3(18, 28, 70);
-    let target = new THREE.Vector3(0, 0, 0);
-    const narrowViewport = this.camera.aspect < 0.72;
-    if (state.frame === 'galaxy') {
-      position = narrowViewport ? new THREE.Vector3(0, 360, 520) : new THREE.Vector3(0, 115, 155);
-    } else if (state.frame === 'space' && state.bookmark === 'full') {
-      position = narrowViewport ? new THREE.Vector3(0, 600, 650) : new THREE.Vector3(380, 240, 500);
-    } else {
-      switch (state.bookmark) {
-        case 'inner':
-          position = new THREE.Vector3(12, 18, 34);
-          break;
-        case 'outer':
-          position = new THREE.Vector3(380, 400, 760);
-          break;
-        case 'path':
-          position = new THREE.Vector3(55, 22, 100);
-          break;
-        case 'ecliptic':
-          position = new THREE.Vector3(0, 850, 0.01);
-          break;
-        case 'hero':
-          position = new THREE.Vector3(14, 24, 62);
-          target = new THREE.Vector3(6, 0, 0);
-          break;
-        case 'full':
-          position = narrowViewport ? new THREE.Vector3(0, 600, 650) : new THREE.Vector3(380, 240, 500);
-          break;
-      }
-    }
-
-    this.startCameraMove(position, target, nowMs, state.reducedMotion || isInitialComposition, 'composition');
-  }
-
-  private applyPendingFocus(nowMs: number): void {
-    if (!this.pendingFocus || !this.currentState) return;
-    const isWideView = this.currentState.frame === 'galaxy'
-      || (this.currentState.frame === 'space' && this.currentState.bookmark === 'full');
-    if (isWideView) return;
-    const { body, source } = this.pendingFocus;
-    const object = body === 'sun' ? this.sunMesh : this.planetMeshes.get(body);
-    if (!object?.visible) return;
-    const world = new THREE.Vector3();
-    object.getWorldPosition(world);
-    const radius = body === 'sun' ? SUN_DISPLAY_RADIUS : planetDisplayRadius(body);
-    const distance = radius * (body === 'sun' ? 6 : 8);
-    const offset = new THREE.Vector3(1, 0.55, 1).normalize().multiplyScalar(distance);
-    this.startCameraMove(world.clone().add(offset), world, nowMs, this.currentState.reducedMotion, source);
-    this.pendingFocus = null;
-  }
-
-  private startCameraMove(
-    position: THREE.Vector3,
-    target: THREE.Vector3,
-    nowMs: number,
-    reducedMotion: boolean,
-    source: 'composition' | 'command' | 'follow',
-  ): void {
-    this.cameraTween = {
-      start: this.camera.position.clone(),
-      end: position,
-      startTarget: this.controls.target.clone(),
-      endTarget: target,
-      startedAt: reducedMotion ? nowMs - CAMERA_TWEEN_DURATION_MS : nowMs,
-      source,
-    };
-  }
-
-  private updateCameraTween(reducedMotion: boolean, nowMs: number): void {
-    if (!this.cameraTween) return;
-    const duration = reducedMotion ? 1 : CAMERA_TWEEN_DURATION_MS;
-    const progress = Math.min(1, (nowMs - this.cameraTween.startedAt) / duration);
-    const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-    this.camera.position.lerpVectors(this.cameraTween.start, this.cameraTween.end, eased);
-    this.controls.target.lerpVectors(this.cameraTween.startTarget, this.cameraTween.endTarget, eased);
-    if (progress >= 1) this.cameraTween = null;
-  }
-
-  private nearestBodyAt(clientX: number, clientY: number, bounds: DOMRect): SelectableBody | null {
-    const pointer = new THREE.Vector2(clientX - bounds.left, clientY - bounds.top);
-    let nearest: { body: SelectableBody; distance: number } | null = null;
-    for (const [body, position] of this.markerScreenPositions) {
-      const distance = pointer.distanceTo(position);
-      if (distance <= 22 && (!nearest || distance < nearest.distance)) nearest = { body, distance };
-    }
-    return nearest?.body ?? null;
+    this.sceneLabels.render(state, this.camera, this.cameraController.controls.target, width, height);
+    this.pathGuidePresentation.projectLabels(
+      this.camera,
+      width,
+      height,
+      state.frame === 'space' && state.bookmark === 'path',
+    );
   }
 
   private handlePointerMove(event: PointerEvent): void {
     const bounds = this.renderer.domElement.getBoundingClientRect();
-    this.hoveredBody = this.nearestBodyAt(event.clientX, event.clientY, bounds);
+    this.sceneLabels.updateHover(event.clientX, event.clientY, bounds);
   }
 
   private handlePointer(event: PointerEvent): void {
     if (!this.currentState) return;
     const bounds = this.renderer.domElement.getBoundingClientRect();
-    const markerHit = this.nearestBodyAt(event.clientX, event.clientY, bounds);
+    const markerHit = this.sceneLabels.hitTest(event.clientX, event.clientY, bounds);
     if (markerHit) {
       this.onSelect(markerHit);
       return;
@@ -1201,103 +550,28 @@ export class OrbitalScene {
     this.pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     this.pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const targets: THREE.Object3D[] = [this.sunMesh, ...this.planetMeshes.values()];
+    const targets: THREE.Object3D[] = [this.solarPresentation.mesh, ...this.planetMeshes.values()];
     const hit = this.raycaster.intersectObjects(targets, false)[0];
     if (!hit) return;
     const id = hit.object.userData.planetId as PlanetId | undefined;
     this.onSelect(id ?? 'sun');
   }
 
-  private applyControlConstraints(frame: ViewMode): void {
-    const isGalaxy = frame === 'galaxy';
-    this.controls.enablePan = !isGalaxy;
-    this.controls.minDistance = isGalaxy ? 100 : 0.025;
-    this.controls.maxDistance = isGalaxy ? 650 : 2_500;
-    this.controls.minPolarAngle = isGalaxy ? 0.45 : 0.05;
-    this.controls.maxPolarAngle = isGalaxy ? 1.25 : Math.PI - 0.05;
-  }
-
-  private updateSunSurface(reducedMotion: boolean, nowMs: number): void {
-    const elapsedSeconds = Math.min(0.05, Math.max(0, (nowMs - this.lastSunAnimationAt) / 1_000));
-    this.lastSunAnimationAt = nowMs;
-    if (!reducedMotion) {
-      this.sunSurfaceTime += elapsedSeconds * 0.22;
-      this.galaxyCoronaTime += elapsedSeconds * 0.45;
-    }
-    const timeUniform = this.sunMaterial.uniforms.time;
-    if (timeUniform) timeUniform.value = this.sunSurfaceTime;
-    const glowScale = SUN_DISPLAY_RADIUS * 6.2;
-    const glowBreath = reducedMotion ? 1 : 1 + Math.sin(this.sunSurfaceTime * 0.7) * 0.025;
-    this.sunGlow.scale.set(glowScale * glowBreath, glowScale * glowBreath, 1);
-    if (this.sunGlow.material instanceof THREE.SpriteMaterial) {
-      this.sunGlow.material.opacity = 0.72 * (reducedMotion ? 1 : 1 + Math.sin(this.sunSurfaceTime * 0.63) * 0.055);
-    }
-
-    for (const corona of this.sunCoronaLayers) {
-      if (!(corona.material instanceof THREE.SpriteMaterial)) continue;
-      const baseRotation = typeof corona.material.userData.baseRotation === 'number'
-        ? corona.material.userData.baseRotation
-        : 0;
-      const driftRate = typeof corona.userData.driftRate === 'number' ? corona.userData.driftRate : 0;
-      corona.material.rotation = baseRotation + this.sunSurfaceTime * driftRate;
-      const baseScale = typeof corona.userData.baseScale === 'number' ? corona.userData.baseScale : 1;
-      const breathPhase = typeof corona.userData.breathPhase === 'number' ? corona.userData.breathPhase : 0;
-      const breath = reducedMotion ? 1 : 1 + Math.sin(this.sunSurfaceTime * 0.31 + breathPhase) * 0.018;
-      corona.scale.set(baseScale * breath, baseScale * breath, 1);
-    }
-
-    const galaxyCoronaScale = typeof this.galaxySunCorona.userData.baseScale === 'number'
-      ? this.galaxySunCorona.userData.baseScale
-      : 7;
-    const galaxyCoronaPulse = reducedMotion ? 1 : 1 + Math.sin(this.galaxyCoronaTime) * 0.035;
-    this.galaxySunCorona.scale.set(galaxyCoronaScale * galaxyCoronaPulse, galaxyCoronaScale * galaxyCoronaPulse, 1);
-  }
-
   private applyQuality(preference: QualityPreference, frame: ViewMode): void {
-    const quality = preference === 'auto' ? 'high' : preference;
-    const qualityKey = `${quality}:${frame}:${window.devicePixelRatio}`;
+    const quality = getRenderingQualityProfile(preference);
+    const qualityKey = `${preference}:${frame}:${window.devicePixelRatio}`;
     if (qualityKey === this.appliedQualityKey) return;
     this.appliedQualityKey = qualityKey;
-    const pixelRatio = quality === 'high' ? 2 : quality === 'balanced' ? 1.5 : 1;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatio));
-    const localStarCount = quality === 'high' ? 7_500 : quality === 'balanced' ? 4_500 : 2_300;
-    const galaxyForegroundCount = quality === 'high' ? 450 : quality === 'balanced' ? 260 : 120;
-    const galaxyCount = quality === 'high' ? 1_200 : quality === 'balanced' ? 700 : 320;
-    this.starField.geometry.setDrawRange(0, frame === 'galaxy' ? galaxyForegroundCount : localStarCount);
-    this.galaxyStars.geometry.setDrawRange(0, galaxyCount);
-    const coronaLayerCount = quality === 'high' ? 3 : quality === 'balanced' ? 2 : 1;
-    this.sunCoronaLayers.forEach((layer, index) => {
-      layer.visible = index < coronaLayerCount && frame !== 'galaxy';
-    });
-    for (const atmosphere of this.atmosphereMeshes.values()) atmosphere.visible = quality !== 'low';
-    if (this.earthClouds) this.earthClouds.visible = quality === 'high';
-    for (const material of this.ringMaterials) {
-      const baseOpacity = typeof material.userData.baseOpacity === 'number' ? material.userData.baseOpacity : 0.7;
-      const opacityFactor = quality === 'high' ? 1 : quality === 'balanced' ? 0.82 : 0.65;
-      material.opacity = baseOpacity * opacityFactor;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
+    this.starField.geometry.setDrawRange(
+      0,
+      frame === 'galaxy' ? quality.galaxyForegroundStarCount : quality.localStarCount,
+    );
+    for (const atmosphere of this.atmosphereMeshes.values()) atmosphere.visible = quality.showAtmospheres;
+    if (this.earthClouds) this.earthClouds.visible = quality.showEarthClouds;
+    for (const ring of this.ringMaterials) {
+      ring.material.opacity = ring.fullOpacity * quality.ringOpacityFactor;
     }
-    const [disk, haze] = this.galaxyDiskMaterials;
-    if (disk) disk.opacity = quality === 'low' ? 0.78 : 0.92;
-    if (haze) haze.opacity = quality === 'high' ? 0.22 : quality === 'balanced' ? 0.14 : 0.08;
-    const coronaMaterial = this.galaxySunCorona.material;
-    const coronaScale = quality === 'high' ? 7 : quality === 'balanced' ? 6 : 4.8;
-    const coronaOpacity = quality === 'high' ? 0.58 : quality === 'balanced' ? 0.42 : 0.26;
-    this.galaxySunCorona.userData.baseScale = coronaScale;
-    this.galaxySunCorona.userData.baseOpacity = coronaOpacity;
-    coronaMaterial.opacity = coronaOpacity;
   }
 
-  private monitorPerformance(quality: QualityPreference, nowMs: number): void {
-    const delta = nowMs - this.lastFrameAt;
-    this.lastFrameAt = nowMs;
-    if (delta <= 0 || delta > 500) return;
-    this.frameSamples.push(delta);
-    if (this.frameSamples.length < 180) return;
-    const average = this.frameSamples.reduce((sum, sample) => sum + sample, 0) / this.frameSamples.length;
-    this.frameSamples.length = 0;
-    if (quality === 'auto' && average > 25 && !this.autoQualityAdapted) {
-      this.autoQualityAdapted = true;
-      this.onQualityAdapted('balanced');
-    }
-  }
 }

@@ -11,6 +11,7 @@ import type {
   ViewOptions,
 } from '../experience/experience-state';
 import { GALACTIC_PLAYBACK_SPEEDS, getGalacticOrbitPresentation } from '../experience/experience-state';
+import { QUALITY_CORONA_DETAIL, resolveQualityTier } from '../experience/quality';
 import { TOUR_CHAPTERS } from '../experience/tour';
 
 export interface PlanetCardDetails {
@@ -165,7 +166,7 @@ export class AppInterface {
     });
     element<HTMLButtonElement>('reset-camera').addEventListener('click', options.onResetCamera);
     element<HTMLButtonElement>('replay-button').addEventListener('click', () => {
-      this.options.dispatch(this.currentFrame === 'galaxy' ? { type: 'replay-galactic' } : { type: 'replay' });
+      this.options.dispatch(this.currentFrame === 'galaxy' ? { type: 'replay-galactic' } : { type: 'replay-solar' });
     });
     element<HTMLButtonElement>('continue-button').addEventListener('click', () => {
       this.options.dispatch({ type: 'dismiss-completion' });
@@ -240,13 +241,19 @@ export class AppInterface {
     }
     const play = element<HTMLButtonElement>('play-toggle');
     play.setAttribute('aria-pressed', String(state.isPlaying));
+    const activeJourneyComplete = isGalaxy ? state.galacticJourneyComplete : state.journeyComplete;
+    play.disabled = activeJourneyComplete;
     const playLabel = isGalaxy
-      ? state.isPlaying
+      ? state.galacticJourneyComplete
+        ? 'Galactic Orbit Complete'
+        : state.isPlaying
         ? 'Pause Galactic Orbit'
         : state.galacticElapsedMillionYears > 0
           ? 'Resume Galactic Orbit'
           : 'Play Galactic Orbit'
-      : state.isPlaying ? 'Pause simulation' : 'Play simulation';
+      : state.journeyComplete
+        ? 'Simulation Complete'
+        : state.isPlaying ? 'Pause simulation' : 'Play simulation';
     play.setAttribute('aria-label', playLabel);
     const playIcon = play.firstElementChild;
     if (playIcon) playIcon.textContent = state.isPlaying ? 'Ⅱ' : '▶';
@@ -313,8 +320,7 @@ export class AppInterface {
     const solarMotionStatus = state.reducedMotion
       ? 'Decorative solar motion frozen for reduced motion.'
       : 'Decorative solar motion active.';
-    const effectiveQuality = state.quality === 'auto' ? 'high' : state.quality;
-    const coronaDetail = effectiveQuality === 'high' ? 'full' : effectiveQuality === 'balanced' ? 'reduced' : 'simplified';
+    const coronaDetail = QUALITY_CORONA_DETAIL[resolveQualityTier(state.quality)];
     solarPresentation.textContent = `${solarMotionStatus} Driven by real presentation time; playback speed independent. Layered corona detail: ${coronaDetail}.`;
     element<HTMLElement>('explain-title').textContent = explanation.title;
     element<HTMLElement>('explain-copy').innerHTML = explanation.html;
@@ -330,7 +336,10 @@ export class AppInterface {
     this.renderTour(state);
     element<HTMLButtonElement>('replay-journey').hidden = state.tour.status !== 'complete';
     const journeyComplete = isGalaxy ? state.galacticJourneyComplete : state.journeyComplete;
-    this.completion.hidden = !journeyComplete || (isGalaxy && state.galacticCompletionDismissed);
+    const completionDismissed = isGalaxy
+      ? state.galacticCompletionDismissed
+      : state.journeyCompletionDismissed;
+    this.completion.hidden = !journeyComplete || completionDismissed;
     element<HTMLElement>('completion-kicker').textContent = isGalaxy ? 'Approximately 230 million years elapsed' : '165 Earth years later';
     element<HTMLElement>('completion-title').textContent = isGalaxy ? 'Schematic orbit complete' : 'Journey complete';
     element<HTMLElement>('completion-copy').textContent = isGalaxy
