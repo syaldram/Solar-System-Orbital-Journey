@@ -2,8 +2,20 @@ name: Verify and deploy to GitHub Pages
 
 on:
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.agents/**'
+      - 'skills-lock.json'
+      - 'LICENSE'
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.agents/**'
+      - 'skills-lock.json'
+      - 'LICENSE'
   workflow_dispatch:
 
 permissions:
