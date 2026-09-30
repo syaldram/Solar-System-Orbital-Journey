@@ -1,4 +1,23 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
+
+type Box = NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>;
+
+// Camera tweens and OrbitControls damping keep moving after input ends, and
+// slower CI renderers stretch that motion out, so wait for the marker to rest.
+async function settledBoundingBox(locator: Locator): Promise<Box> {
+  let previous: Box | null = null;
+  let stableSamples = 0;
+  await expect.poll(async () => {
+    const current = await locator.boundingBox();
+    const moved = !current || !previous
+      || Math.hypot(current.x - previous.x, current.y - previous.y) >= 0.25;
+    stableSamples = moved ? 0 : stableSamples + 1;
+    previous = current;
+    return stableSamples;
+  }, { timeout: 15_000, intervals: [150] }).toBeGreaterThanOrEqual(3);
+  if (!previous) throw new Error('Marker has no bounding box');
+  return previous;
+}
 
 test('offers a still choice between the journey and free exploration', async ({ page }) => {
   await page.goto('./');
@@ -252,8 +271,7 @@ test('explains Galactic orbit phase, direction, and completed progress semantica
   const status = page.getByRole('region', { name: 'Galactic orbit status' });
   const progress = status.getByRole('progressbar', { name: 'Completed schematic orbit' });
   const sunMarker = page.getByRole('button', { name: 'Select Sun' });
-  await page.waitForTimeout(900);
-  const presentAnchor = await sunMarker.boundingBox();
+  const presentAnchor = await settledBoundingBox(sunMarker);
   await expect(status.getByText('At present-location anchor', { exact: true })).toBeVisible();
   await expect(status.getByText('Direction arrow follows the forward tangent.')).toBeVisible();
   await expect(status.getByText('Highlighted arc shows completed progress, not a physical trail.')).toBeVisible();
@@ -267,12 +285,9 @@ test('explains Galactic orbit phase, direction, and completed progress semantica
   await page.getByLabel('Galactic elapsed time through one schematic orbit').fill('230');
   await expect(status.getByText('Present anchor reached after one complete orbit', { exact: true })).toBeVisible();
   await expect(progress).toHaveAttribute('aria-valuenow', '100');
-  await page.waitForTimeout(100);
-  const completedAnchor = await sunMarker.boundingBox();
-  expect(presentAnchor).not.toBeNull();
-  expect(completedAnchor).not.toBeNull();
-  expect(Math.abs((completedAnchor?.x ?? 0) - (presentAnchor?.x ?? 0))).toBeLessThan(1);
-  expect(Math.abs((completedAnchor?.y ?? 0) - (presentAnchor?.y ?? 0))).toBeLessThan(1);
+  const completedAnchor = await settledBoundingBox(sunMarker);
+  expect(Math.abs(completedAnchor.x - presentAnchor.x)).toBeLessThan(1);
+  expect(Math.abs(completedAnchor.y - presentAnchor.y)).toBeLessThan(1);
 });
 
 test('moves the schematic Sun marker when Galactic elapsed time plays', async ({ page }) => {
@@ -633,12 +648,10 @@ test('preserves Planet follow through camera gestures and time controls', async 
 test('preserves the user panned camera offset while Planet follow advances', async ({ page }) => {
   await page.goto('./?view=space&body=saturn&camera=path');
   await page.getByRole('button', { name: 'Follow Planet' }).click();
-  await page.waitForTimeout(950);
 
   const saturn = page.getByRole('button', { name: 'Select Saturn' });
-  const beforePan = await saturn.boundingBox();
+  const beforePan = await settledBoundingBox(saturn);
   const canvas = await page.locator('canvas').boundingBox();
-  expect(beforePan).not.toBeNull();
   expect(canvas).not.toBeNull();
   if (canvas) {
     await page.mouse.move(canvas.x + canvas.width * 0.45, canvas.y + canvas.height * 0.45);
@@ -646,22 +659,15 @@ test('preserves the user panned camera offset while Planet follow advances', asy
     await page.mouse.move(canvas.x + canvas.width * 0.65, canvas.y + canvas.height * 0.55, { steps: 8 });
     await page.mouse.up({ button: 'right' });
   }
-  await page.waitForTimeout(900);
-  const afterPan = await saturn.boundingBox();
-  expect(afterPan).not.toBeNull();
-  expect(Math.hypot(
-    (afterPan?.x ?? 0) - (beforePan?.x ?? 0),
-    (afterPan?.y ?? 0) - (beforePan?.y ?? 0),
-  )).toBeGreaterThan(5);
+  const afterPan = await settledBoundingBox(saturn);
+  expect(Math.hypot(afterPan.x - beforePan.x, afterPan.y - beforePan.y)).toBeGreaterThan(5);
 
-  await page.getByLabel('Simulated date across 165 years').fill('5000');
-  await page.waitForTimeout(250);
-  const afterAdvance = await saturn.boundingBox();
-  expect(afterAdvance).not.toBeNull();
-  expect(Math.hypot(
-    (afterAdvance?.x ?? 0) - (afterPan?.x ?? 0),
-    (afterAdvance?.y ?? 0) - (afterPan?.y ?? 0),
-  )).toBeLessThan(5);
+  const dateSlider = page.getByLabel('Simulated date across 165 years');
+  const dateBefore = await dateSlider.inputValue();
+  await dateSlider.fill('5000');
+  await expect(dateSlider).not.toHaveValue(dateBefore);
+  const afterAdvance = await settledBoundingBox(saturn);
+  expect(Math.hypot(afterAdvance.x - afterPan.x, afterAdvance.y - afterPan.y)).toBeLessThan(5);
   await expect(page.getByRole('button', { name: 'Stop Following Saturn' })).toHaveAttribute('aria-pressed', 'true');
 });
 
