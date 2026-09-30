@@ -53,7 +53,7 @@ const EXPLANATIONS: Readonly<Record<ViewMode, { title: string; html: string; sta
     title: 'Travel with Sun',
     status: 'Body ratios preserved · orbital distances proportional',
     html: `<p>The camera travels with the Sun, so it appears fixed while each planet follows its calculated Keplerian orbit.</p>
-      <ul><li>Orbital distances and eccentricities remain proportional.</li><li>The Sun and planets preserve their physical radius ratios; hollow markers reveal unresolved bodies.</li><li>The pale plane is the <em>ecliptic</em>: Earth’s orbital plane used as a Solar-System reference.</li></ul>`,
+      <ul><li>Orbital distances and eccentricities remain proportional.</li><li>The Sun and planets preserve their physical radius ratios; hollow markers reveal unresolved bodies.</li><li>The Sun's granular surface, layered corona filaments, and subtle breathing glow are procedural presentation effects, not modeled solar weather. Decorative motion evolves in real presentation time, independently of simulation speed, and freezes with reduced motion.</li><li>Visual quality may simplify corona detail without changing the Sun's enhanced body size, lighting, or calculated motion.</li><li>The pale plane is the <em>ecliptic</em>: Earth’s orbital plane used as a Solar-System reference.</li></ul>`,
   },
   space: {
     title: 'Watch from Space',
@@ -308,6 +308,14 @@ export class AppInterface {
       ? 'Full 165-year path · current calculated positions'
       : explanation.status;
     element<HTMLElement>('scene-status').innerHTML = `<span class="scene-status__dot" aria-hidden="true"></span><div><strong>${explanation.title}</strong><small>${status}${rotationNote}</small></div>`;
+    const solarPresentation = element<HTMLElement>('solar-presentation-status');
+    solarPresentation.hidden = isGalaxy;
+    const solarMotionStatus = state.reducedMotion
+      ? 'Decorative solar motion frozen for reduced motion.'
+      : 'Decorative solar motion active.';
+    const effectiveQuality = state.quality === 'auto' ? 'high' : state.quality;
+    const coronaDetail = effectiveQuality === 'high' ? 'full' : effectiveQuality === 'balanced' ? 'reduced' : 'simplified';
+    solarPresentation.textContent = `${solarMotionStatus} Driven by real presentation time; playback speed independent. Layered corona detail: ${coronaDetail}.`;
     element<HTMLElement>('explain-title').textContent = explanation.title;
     element<HTMLElement>('explain-copy').innerHTML = explanation.html;
 

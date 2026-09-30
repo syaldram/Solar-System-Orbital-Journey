@@ -31,6 +31,57 @@ export function createGlowTexture(): THREE.CanvasTexture {
   return canvasTexture(canvas);
 }
 
+export function createCoronaTexture(layer: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext('2d');
+  if (!context) return canvasTexture(canvas);
+
+  const random = seededRandom(9_170_431 + layer * 7_919);
+  const centerX = 128 + (layer - 1) * 4;
+  const centerY = 128 - layer * 2;
+  const haze = context.createRadialGradient(centerX, centerY, 42, centerX, centerY, 126);
+  haze.addColorStop(0, 'rgba(255,236,179,0)');
+  haze.addColorStop(0.36, 'rgba(255,196,99,.055)');
+  haze.addColorStop(0.64, 'rgba(255,139,52,.035)');
+  haze.addColorStop(1, 'rgba(255,102,32,0)');
+  context.fillStyle = haze;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.save();
+  context.translate(centerX, centerY);
+  context.rotate((layer - 1) * 0.29);
+  context.scale(1 + layer * 0.07, 0.82 + layer * 0.055);
+  context.globalCompositeOperation = 'lighter';
+  context.lineCap = 'round';
+  for (let index = 0; index < 22 - layer * 4; index += 1) {
+    const angle = random() * Math.PI * 2;
+    const direction = random() > 0.5 ? 1 : -1;
+    const arc = direction * (0.28 + random() * 0.5);
+    const startRadius = 41 + random() * 12;
+    const endRadius = 55 + random() * (23 - layer * 3);
+    const startX = Math.cos(angle) * startRadius;
+    const startY = Math.sin(angle) * startRadius;
+    const endX = Math.cos(angle + arc) * endRadius;
+    const endY = Math.sin(angle + arc) * endRadius;
+    const firstControlRadius = startRadius + (endRadius - startRadius) * 0.36;
+    const secondControlRadius = endRadius + 2 + random() * 5;
+    const firstControlX = Math.cos(angle + arc * 0.32) * firstControlRadius;
+    const firstControlY = Math.sin(angle + arc * 0.32) * firstControlRadius;
+    const secondControlX = Math.cos(angle + arc * 0.78) * secondControlRadius;
+    const secondControlY = Math.sin(angle + arc * 0.78) * secondControlRadius;
+    context.strokeStyle = `rgba(255,${150 + Math.round(random() * 70)},${55 + Math.round(random() * 60)},${0.018 + random() * 0.042})`;
+    context.lineWidth = 0.6 + random() * 1.05;
+    context.beginPath();
+    context.moveTo(startX, startY);
+    context.bezierCurveTo(firstControlX, firstControlY, secondControlX, secondControlY, endX, endY);
+    context.stroke();
+  }
+  context.restore();
+  return canvasTexture(canvas);
+}
+
 export function createUranusTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
@@ -275,12 +326,16 @@ export function createSunMaterial(): THREE.ShaderMaterial {
 
       void main() {
         vec2 flow = vec2(time * 0.7, -time * 0.34);
-        float cells = fbm(vUv * vec2(52.0, 26.0) + flow);
+        float cells = fbm(vUv * vec2(68.0, 34.0) + flow);
+        float fineCells = fbm(vUv * vec2(132.0, 66.0) - flow * 0.46);
         float broad = fbm(vUv * vec2(8.0, 4.0) - flow * 0.25);
         float limb = 0.62 + 0.38 * max(0.0, vNormal.z);
         vec3 darkGold = vec3(1.0, 0.31, 0.025);
         vec3 paleGold = vec3(1.0, 0.86, 0.35);
-        vec3 color = mix(darkGold, paleGold, smoothstep(0.25, 0.88, cells * 0.8 + broad * 0.35));
+        float granulation = cells * 0.7 + fineCells * 0.22 + broad * 0.24;
+        float cellEdges = smoothstep(0.08, 0.26, abs(cells - fineCells));
+        vec3 color = mix(darkGold, paleGold, smoothstep(0.28, 0.84, granulation));
+        color *= mix(0.88, 1.08, cellEdges);
         gl_FragColor = vec4(color * limb, 1.0);
       }
     `,
