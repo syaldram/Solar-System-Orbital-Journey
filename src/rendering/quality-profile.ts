@@ -2,6 +2,7 @@ import type { QualityPreference } from '../experience/experience-state';
 import { resolveQualityTier, type QualityTier } from '../experience/quality';
 
 export interface RenderingQualityProfile {
+  readonly gravityGridDensity: number;
   readonly pixelRatioCap: number;
   readonly localStarCount: number;
   readonly galaxyForegroundStarCount: number;
@@ -19,6 +20,7 @@ export interface RenderingQualityProfile {
 
 const RENDERING_QUALITY_PROFILES: Readonly<Record<QualityTier, RenderingQualityProfile>> = {
   high: {
+    gravityGridDensity: 128,
     pixelRatioCap: 2,
     localStarCount: 7_500,
     galaxyForegroundStarCount: 450,
@@ -34,6 +36,7 @@ const RENDERING_QUALITY_PROFILES: Readonly<Record<QualityTier, RenderingQualityP
     pathMarkerSpacingAu: 4,
   },
   balanced: {
+    gravityGridDensity: 96,
     pixelRatioCap: 1.5,
     localStarCount: 4_500,
     galaxyForegroundStarCount: 260,
@@ -49,6 +52,7 @@ const RENDERING_QUALITY_PROFILES: Readonly<Record<QualityTier, RenderingQualityP
     pathMarkerSpacingAu: 7,
   },
   low: {
+    gravityGridDensity: 64,
     pixelRatioCap: 1,
     localStarCount: 2_300,
     galaxyForegroundStarCount: 120,

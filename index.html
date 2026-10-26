@@ -55,6 +55,8 @@
           </nav>
 
           <div class="topbar__actions">
+            <button id="enter-gravity" class="icon-button icon-button--text" type="button">Sun’s Gravity</button>
+            <button id="leave-gravity" class="icon-button icon-button--text" type="button" hidden>Back</button>
             <button id="replay-journey" class="icon-button icon-button--text" type="button" hidden>Replay Journey</button>
             <button id="explain-button" class="icon-button icon-button--text" type="button">Explain this view</button>
             <button id="options-button" class="icon-button" type="button" aria-label="View options" aria-expanded="false">⋯</button>
@@ -67,6 +69,8 @@
         </div>
         <div id="solar-presentation-status" class="sr-only" role="note" aria-label="Solar presentation"></div>
 
+        <p id="gravity-disclosure" class="gravity-disclosure" hidden>Schematic — distances compressed; well depths and body sizes exaggerated.</p>
+        <p id="gravity-share-reason" class="sr-only" hidden>Sharing is unavailable in this session-only schematic. Back restores scientific view sharing.</p>
         <section id="path-motion" class="path-motion" aria-label="Along the Path motion" hidden>
           <small>Distance traveled</small>
           <strong id="path-distance-au">0 AU</strong>
@@ -109,7 +113,7 @@
           <h2 id="planet-name"></h2>
           <p id="planet-identity" class="planet-card__identity"></p>
           <dl class="planet-card__metrics">
-            <div><dt>Distance now</dt><dd id="planet-distance"></dd></div>
+            <div><dt id="planet-distance-label">Distance now</dt><dd id="planet-distance"></dd></div>
             <div><dt>Orbital speed</dt><dd id="planet-speed"></dd></div>
             <div><dt>Orbital period</dt><dd id="planet-period"></dd></div>
           </dl>
@@ -120,7 +124,7 @@
               <div><dt>Eccentricity</dt><dd id="planet-eccentricity">Varies slightly with epoch</dd></div>
               <div><dt>Axial tilt</dt><dd id="planet-tilt"></dd></div>
             </dl>
-            <p class="fine-print">Bodies share one enhanced radius scale, preserving their physical size ratios. Orbital distances remain proportional.</p>
+            <p id="planet-scale-note" class="fine-print">Bodies share one enhanced radius scale, preserving their physical size ratios. Orbital distances remain proportional.</p>
           </details>
           <div class="planet-card__actions">
             <button id="focus-planet" class="button button--secondary button--small" type="button">Focus Camera</button>
@@ -145,6 +149,7 @@
           <label class="toggle"><span>Labels</span><input type="checkbox" data-view-option="labels" checked /><i></i></label>
           <label class="toggle"><span>Motion trails</span><input type="checkbox" data-view-option="trails" /><i></i></label>
           <label class="toggle"><span>Orbital-plane overlays</span><input type="checkbox" data-view-option="planeOverlays" /><i></i></label>
+          <p id="gravity-options-reason" class="fine-print" hidden>Motion trails and orbital-plane overlays are unavailable on the schematic sheet. Scientific-view settings are retained. Sharing is unavailable in this session-only schematic; use Back to share a scientific view.</p>
           <hr />
           <label class="toggle"><span>Reduce motion</span><input id="reduced-motion" type="checkbox" /><i></i></label>
           <label class="select-row">Visual quality

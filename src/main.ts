@@ -118,7 +118,7 @@ const appInterface = new AppInterface({
   onShare: () => void shareCurrentView(),
   onFocus: (body) => {
     dispatch({ type: 'focus-camera' });
-    if (state.frame === 'galaxy' || state.cameraBookmark === 'full') {
+    if (!state.gravityReturn && (state.frame === 'galaxy' || state.cameraBookmark === 'full')) {
       dispatch({ type: 'set-frame', frame: 'space' });
       dispatch({ type: 'set-bookmark', bookmark: 'path' });
     }
@@ -178,7 +178,7 @@ function dispatch(action: ExperienceAction): void {
   if (previousState.followedPlanet !== state.followedPlanet) {
     if (state.followedPlanet) {
       const name = getPlanetProfile(state.followedPlanet).name;
-      const movedFromFullJourney = previousState.frame === 'space' && previousState.cameraBookmark === 'full';
+      const movedFromFullJourney = !state.gravityReturn && previousState.frame === 'space' && previousState.cameraBookmark === 'full';
       appInterface.showToast(movedFromFullJourney
         ? `Switched to the Along the Path camera to follow ${name}.`
         : `Camera is now following ${name}.`);
@@ -196,7 +196,7 @@ function renderInterface(): void {
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
-      state.frame === 'sun' ? 'sun' : 'space',
+      state.gravityReturn || state.frame === 'sun' ? 'sun' : 'space',
     );
     const planet = snapshot.planets.find(({ id }) => id === state.selectedBody);
     if (planet) {
@@ -217,6 +217,10 @@ function renderInterface(): void {
 }
 
 async function shareCurrentView(): Promise<void> {
+  if (state.gravityReturn) {
+    appInterface.showToast('Sharing is unavailable in this session-only schematic. Use Back to share a scientific view.');
+    return;
+  }
   const params = encodeSharedView({
     timeMs: state.currentTimeMs,
     frame: state.frame,
@@ -257,12 +261,13 @@ function animate(now: number): void {
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
-      state.frame === 'sun' ? 'sun' : 'space',
+      state.gravityReturn || state.frame === 'sun' ? 'sun' : 'space',
     );
     const galacticPresentation = getGalacticOrbitPresentation(state);
     scene.render(
       {
         snapshot,
+        gravity: state.gravityReturn !== null,
         frame: state.frame,
         bookmark: state.cameraBookmark,
         cameraRevision: state.cameraRevision,
@@ -284,5 +289,6 @@ function animate(now: number): void {
   window.requestAnimationFrame(animate);
 }
 
+window.addEventListener('pagehide', (event) => { if (!event.persisted) scene?.dispose(); });
 renderInterface();
 window.requestAnimationFrame(animate);

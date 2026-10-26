@@ -49,6 +49,12 @@ function formatNumber(value: number, maximumFractionDigits = 2): string {
   return new Intl.NumberFormat('en', { maximumFractionDigits }).format(value);
 }
 
+const GRAVITY_EXPLANATION = {
+  title: 'Sun’s Gravity',
+  status: 'Illustrative gravity sheet · calculated orbital timing',
+  html: `<p>The Sun’s gravity curves planetary motion while planets continue moving sideways. This sheet is an explanatory analogy.</p><p>Real planets do not roll on a membrane or lose orbital energy through sheet friction. The grid does not calculate spacetime curvature or quantitative gravitational forces.</p><p>Distances are compressed, and well depths and body sizes are exaggerated for visibility. The blue surface height is illustrative, not planetary ecliptic height. Orbital timing and physical information come from the existing JPL approximate orbital model.</p><p>Play or scrub the shared Solar-System timeline to move the planets and their smaller depressions together. Focus, Follow and Reset View use the displayed positions.</p>`,
+};
+
 const EXPLANATIONS: Readonly<Record<ViewMode, { title: string; html: string; status: string }>> = {
   sun: {
     title: 'Travel with Sun',
@@ -85,10 +91,13 @@ export class AppInterface {
   private selectedBody: SelectableBody | null = null;
   private toastTimer = 0;
   private entered = false;
+  private gravity = false;
   private currentFrame: ViewMode = 'sun';
   private renderedTimelineFrame: ViewMode | null = null;
 
   constructor(private readonly options: AppInterfaceOptions) {
+    element<HTMLButtonElement>('enter-gravity').addEventListener('click', () => this.options.dispatch({ type: 'enter-gravity' }));
+    element<HTMLButtonElement>('leave-gravity').addEventListener('click', () => this.options.dispatch({ type: 'leave-gravity' }));
     element<HTMLButtonElement>('begin-journey').addEventListener('click', () => this.enter('tour'));
     element<HTMLButtonElement>('explore-freely').addEventListener('click', () => this.enter('free'));
     element<HTMLButtonElement>('brand-home').addEventListener('click', () => {
@@ -207,6 +216,25 @@ export class AppInterface {
   }
 
   render(state: ExperienceState, pathMotion: AlongPathMotion): void {
+    const gravity = state.gravityReturn !== null;
+    const handoff = gravity !== this.gravity;
+    this.gravity = gravity;
+    this.app.dataset.gravity = String(gravity);
+    element<HTMLElement>('enter-gravity').hidden = gravity || state.frame === 'galaxy' || state.tour.status === 'running';
+    element<HTMLElement>('leave-gravity').hidden = !gravity;
+    element<HTMLElement>('gravity-disclosure').hidden = !gravity;
+    element<HTMLElement>('gravity-options-reason').hidden = !gravity;
+    const share = element<HTMLButtonElement>('share-button');
+    share.disabled = gravity;
+    share.title = gravity ? 'Sharing is unavailable in this session-only schematic. Use Back to share a scientific view.' : '';
+    if (gravity) share.setAttribute('aria-describedby', 'gravity-share-reason');
+    else share.removeAttribute('aria-describedby');
+    document.querySelectorAll<HTMLElement>('.view-switcher, .camera-bookmarks').forEach((navigation) => { navigation.hidden = gravity; });
+    if (handoff) element<HTMLButtonElement>(gravity ? 'leave-gravity' : 'enter-gravity').focus();
+    element<HTMLElement>('planet-distance-label').textContent = gravity ? 'Actual distance from Sun' : 'Distance now';
+    element<HTMLElement>('planet-scale-note').textContent = gravity
+      ? 'Physical values are calculated from the original JPL model. Displayed spacing is compressed; well depths and body sizes are exaggerated.'
+      : 'Bodies share one enhanced radius scale, preserving their physical size ratios. Orbital distances remain proportional.';
     this.currentFrame = state.frame;
     const isGalaxy = state.frame === 'galaxy';
     this.renderTimelineOptions(state.frame);
@@ -281,7 +309,7 @@ export class AppInterface {
       : 'Restrained corona motion uses presentation time, independent of orbit speed.';
 
     const pathMotionPanel = element<HTMLElement>('path-motion');
-    pathMotionPanel.hidden = state.frame !== 'space' || state.cameraBookmark !== 'path';
+    pathMotionPanel.hidden = gravity || state.frame !== 'space' || state.cameraBookmark !== 'path';
     pathMotionPanel.dataset.guideFlow = pathMotion.guideFlow;
     element<HTMLElement>('path-distance-au').textContent = `${formatNumber(
       pathMotion.distanceAu,
@@ -306,12 +334,15 @@ export class AppInterface {
       else button.removeAttribute('aria-current');
     });
     document.querySelectorAll<HTMLInputElement>('[data-view-option]').forEach((input) => {
+      input.disabled = gravity && ['trails', 'planeOverlays'].includes(input.dataset.viewOption ?? '');
+      if (input.disabled) input.setAttribute('aria-describedby', 'gravity-options-reason');
+      else input.removeAttribute('aria-describedby');
       input.checked = state.viewOptions[input.dataset.viewOption as keyof ViewOptions];
     });
 
-    const explanation = EXPLANATIONS[state.frame];
+    const explanation = gravity ? GRAVITY_EXPLANATION : EXPLANATIONS[state.frame];
     const rotationNote = state.speed === 'year' || state.speed === 'decade' ? ' · surface rotation stabilized' : '';
-    const status = state.frame === 'space' && state.cameraBookmark === 'full'
+    const status = !gravity && state.frame === 'space' && state.cameraBookmark === 'full'
       ? 'Full 165-year path · current calculated positions'
       : explanation.status;
     element<HTMLElement>('scene-status').innerHTML = `<span class="scene-status__dot" aria-hidden="true"></span><div><strong>${explanation.title}</strong><small>${status}${rotationNote}</small></div>`;

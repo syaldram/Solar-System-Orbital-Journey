@@ -17,6 +17,7 @@ export interface SolarPresentationState {
 
 export class SolarPresentation {
   readonly mesh: THREE.Mesh;
+  readonly root = new THREE.Group();
 
   private readonly material: THREE.ShaderMaterial;
   private readonly glow: THREE.Sprite;
@@ -25,13 +26,14 @@ export class SolarPresentation {
   private lastAnimationAt = performance.now();
 
   constructor(parent: THREE.Group) {
+    parent.add(this.root);
     this.material = createSunMaterial();
     this.mesh = new THREE.Mesh(
       new THREE.SphereGeometry(SUN_DISPLAY_RADIUS, 64, 40),
       this.material,
     );
     this.mesh.name = 'sun';
-    parent.add(this.mesh);
+    this.root.add(this.mesh);
 
     const coronaColors = [0xffd69b, 0xffaa5a, 0xff7d3a] as const;
     const coronaScales = [7.2, 8.7, 10.2] as const;
@@ -52,7 +54,7 @@ export class SolarPresentation {
       corona.userData.baseScale = SUN_DISPLAY_RADIUS * scale;
       corona.userData.driftRate = [0.012, -0.008, 0.005][index] ?? 0;
       corona.userData.breathPhase = index * 1.9;
-      parent.add(corona);
+      this.root.add(corona);
       return corona;
     });
 
@@ -65,7 +67,7 @@ export class SolarPresentation {
       depthWrite: false,
     }));
     this.glow.scale.set(SUN_DISPLAY_RADIUS * 6.2, SUN_DISPLAY_RADIUS * 6.2, 1);
-    parent.add(this.glow, new THREE.PointLight(0xffe4b4, 1150, 0, 1.45));
+    this.root.add(this.glow, new THREE.PointLight(0xffe4b4, 1150, 0, 1.45));
   }
 
   render(state: SolarPresentationState): void {

@@ -90,7 +90,7 @@ The interface uses exactly these three labels:
 
 - Sun-centered J2000 ecliptic view.
 - Preserve relative semi-major-axis distances and eccentricities.
-- Enhance planet and Sun radii independently for visibility.
+- Enlarge every body with one shared physical-radius factor, preserving Sun-to-planet radius ratios.
 - Use camera movement, markers, and labels to reveal the inner system rather than compressing orbital distances.
 - Short optional trails reveal orbital ellipses.
 
@@ -113,6 +113,14 @@ The interface uses exactly these three labels:
 - State that vertical and radial oscillations are omitted.
 
 Changing reference frames resets motion trails.
+
+### Sun’s Gravity schematic presentation
+
+During free exploration in Travel with Sun or Watch from Space, **Sun’s Gravity** opens a separate schematic presentation, never a fourth scientific frame, new clock, or tour chapter. Entry is unavailable in Galaxy Overview and during the guided tour. Enter paused at the retained Solar-System date and speed; capture the prior frame, camera and selection once, and end Follow. **Back** pauses at the explored date, retains speed, restores the prior scientific frame/camera/valid selection, ends Follow and returns keyboard focus to the entry button. Entry focuses Back. Home and tour transitions leave the schematic cleanly, and entry/exit clear trail history.
+
+The oblique overview shows a blue wire grid, a golden Sun in the dominant central well and all eight distinguishable planets with smaller moving depressions. Displayed radial distances are monotonically compressed; the original JPL orbital timing and physical card values remain unchanged. Body sizes and bounded smooth well depths are illustrative. The visible disclosure reads **Schematic — distances compressed; well depths and body sizes exaggerated.** Explain this view describes sideways planetary motion, calculated timing, and why planets neither roll on a physical membrane nor lose energy through sheet friction. This is not a quantitative gravity or spacetime calculation.
+
+Labels and orbit paths use the displayed surface positions. Selection does not pause or focus automatically. Focus and Follow target the schematic body including its surface height; manual navigation remains available and Reset View restores the still oblique overview. Motion trails, orbital planes and sharing are unavailable with explanations; scientific overlay preferences survive Back. The presentation is session-only, absent from URLs and localStorage. Quality adaptation changes wire density, never orbital accuracy. Reduced motion freezes decoration while allowing requested playback and camera input. No automatic camera orbit, decorative waves, inward spirals or new imagery are introduced.
 
 ## 7. Timeline and playback
 

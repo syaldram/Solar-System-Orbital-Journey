@@ -8,6 +8,7 @@ import { SUN_DISPLAY_RADIUS, planetDisplayRadius } from './display-scale';
 const CAMERA_TWEEN_DURATION_MS = 800;
 
 export interface SceneCameraState {
+  readonly gravity?: boolean;
   readonly bookmark: CameraBookmark;
   readonly cameraRevision: number;
   readonly followedPlanet: PlanetId | null;
@@ -18,6 +19,8 @@ export interface SceneCameraState {
 export class SceneCameraController {
   readonly controls: OrbitControls;
 
+  private gravity = false;
+  private returnPose: { position: THREE.Vector3; target: THREE.Vector3; revision: number } | null = null;
   private currentState: SceneCameraState | null = null;
   private currentBookmark: CameraBookmark | null = null;
   private currentFrame: ViewMode | null = null;
@@ -56,10 +59,29 @@ export class SceneCameraController {
   }
 
   render(state: SceneCameraState, nowMs: number): void {
+    const handoff = Boolean(state.gravity) !== this.gravity;
+    if (handoff) {
+      // Flush damping before capturing or restoring a camera, then cancel all moves.
+      this.controls.enableDamping = false;
+      this.controls.update();
+      this.controls.enableDamping = true;
+      if (state.gravity) this.returnPose = { position: this.camera.position.clone(), target: this.controls.target.clone(), revision: state.cameraRevision };
+      this.pendingFocus = null;
+      this.cameraTween = null;
+      this.lastFollowPosition = null;
+      this.currentCameraRevision = -1;
+      this.gravity = Boolean(state.gravity);
+    }
     this.currentState = state;
     this.syncFollowState(state.followedPlanet);
     this.applyConstraints(state.frame);
     this.applyComposition(state, nowMs);
+    if (handoff && !state.gravity && this.returnPose && state.cameraRevision === this.returnPose.revision) {
+      this.cameraTween = null;
+      this.camera.position.copy(this.returnPose.position);
+      this.controls.target.copy(this.returnPose.target);
+    }
+    if (handoff && !state.gravity) this.returnPose = null;
     this.applyPendingFocus(nowMs);
     this.updateTween(state.reducedMotion, nowMs);
     this.applyFollow(state.followedPlanet, state.frame);
@@ -89,7 +111,10 @@ export class SceneCameraController {
     let position = new THREE.Vector3(18, 28, 70);
     let target = new THREE.Vector3(0, 0, 0);
     const narrowViewport = this.camera.aspect < 0.72;
-    if (state.frame === 'galaxy') {
+    if (state.gravity) {
+      position = narrowViewport ? new THREE.Vector3(0, 300, 600) : new THREE.Vector3(115, 135, 225);
+      target = new THREE.Vector3(0, -7, 0);
+    } else if (state.frame === 'galaxy') {
       position = narrowViewport ? new THREE.Vector3(0, 360, 520) : new THREE.Vector3(0, 115, 155);
     } else if (state.frame === 'space' && state.bookmark === 'full') {
       position = narrowViewport ? new THREE.Vector3(0, 600, 650) : new THREE.Vector3(380, 240, 500);
@@ -123,24 +148,25 @@ export class SceneCameraController {
       position,
       target,
       nowMs,
-      state.reducedMotion || isInitialComposition,
+      state.reducedMotion || isInitialComposition || Boolean(state.gravity),
       'composition',
     );
   }
 
   private applyPendingFocus(nowMs: number): void {
     if (!this.pendingFocus || !this.currentState) return;
-    const isWideView = this.currentState.frame === 'galaxy'
-      || (this.currentState.frame === 'space' && this.currentState.bookmark === 'full');
+    const isWideView = !this.currentState.gravity && (this.currentState.frame === 'galaxy'
+      || (this.currentState.frame === 'space' && this.currentState.bookmark === 'full'));
     if (isWideView) return;
     const { body, source } = this.pendingFocus;
     const object = body === 'sun' ? this.sun : this.planets.get(body);
     if (!object?.visible) return;
     const world = new THREE.Vector3();
     object.getWorldPosition(world);
-    const radius = body === 'sun' ? SUN_DISPLAY_RADIUS : planetDisplayRadius(body);
+    const scale = object.getWorldScale(new THREE.Vector3());
+    const radius = (body === 'sun' ? SUN_DISPLAY_RADIUS : planetDisplayRadius(body)) * Math.max(scale.x, scale.y, scale.z);
     const distance = radius * (body === 'sun' ? 6 : 8);
-    const offset = new THREE.Vector3(1, 0.55, 1).normalize().multiplyScalar(distance);
+    const offset = new THREE.Vector3(1, this.currentState.gravity ? 1.25 : 0.55, 1).normalize().multiplyScalar(distance);
     this.startMove(world.clone().add(offset), world, nowMs, this.currentState.reducedMotion, source);
     this.pendingFocus = null;
   }

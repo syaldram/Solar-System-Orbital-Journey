@@ -31,6 +31,11 @@ export interface ExperienceState {
   readonly galacticSpeed: GalacticPlaybackSpeed;
   readonly galacticJourneyComplete: boolean;
   readonly galacticCompletionDismissed: boolean;
+  readonly gravityReturn: {
+    readonly frame: ViewMode;
+    readonly selectedBody: SelectableBody | null;
+    readonly bookmark: CameraBookmark;
+  } | null;
   readonly frame: ViewMode;
   readonly selectedBody: SelectableBody | null;
   readonly followedPlanet: PlanetId | null;
@@ -62,6 +67,8 @@ export interface GalacticOrbitPresentation {
 }
 
 export type ExperienceAction =
+  | { readonly type: 'enter-gravity' }
+  | { readonly type: 'leave-gravity' }
   | { readonly type: 'play' }
   | { readonly type: 'pause' }
   | { readonly type: 'advance'; readonly realSeconds: number }
@@ -162,6 +169,7 @@ export function createInitialExperienceState(today: Date): ExperienceState {
     galacticSpeed: 5,
     galacticJourneyComplete: false,
     galacticCompletionDismissed: false,
+    gravityReturn: null,
     frame: 'sun',
     selectedBody: null,
     followedPlanet: null,
@@ -192,6 +200,27 @@ function clampGalacticElapsedTime(state: ExperienceState, elapsedMillionYears: n
 
 export function updateExperience(state: ExperienceState, action: ExperienceAction): ExperienceState {
   switch (action.type) {
+    case 'enter-gravity':
+      if (state.gravityReturn || state.frame === 'galaxy' || state.tour.status === 'running') return state;
+      return {
+        ...state,
+        gravityReturn: { frame: state.frame, selectedBody: state.selectedBody, bookmark: state.cameraBookmark },
+        isPlaying: false,
+        followedPlanet: null,
+        trailRevision: state.trailRevision + 1,
+      };
+    case 'leave-gravity':
+      if (!state.gravityReturn) return state;
+      return {
+        ...state,
+        frame: state.gravityReturn.frame,
+        selectedBody: state.gravityReturn.selectedBody,
+        cameraBookmark: state.gravityReturn.bookmark,
+        gravityReturn: null,
+        isPlaying: false,
+        followedPlanet: null,
+        trailRevision: state.trailRevision + 1,
+      };
     case 'play':
       return state.frame === 'galaxy'
         ? state.galacticJourneyComplete ? state : { ...state, isPlaying: true }
@@ -292,6 +321,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
             isPlaying: false,
           };
     case 'set-frame':
+      if (state.gravityReturn) return updateExperience(updateExperience(state, { type: 'leave-gravity' }), action);
       return action.frame === state.frame
         ? state
         : {
@@ -314,7 +344,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     case 'toggle-planet-follow':
       if (state.selectedBody !== action.planet || state.frame === 'galaxy') return state;
       if (state.followedPlanet === action.planet) return { ...state, followedPlanet: null };
-      if (state.frame === 'space' && state.cameraBookmark === 'full') {
+      if (!state.gravityReturn && state.frame === 'space' && state.cameraBookmark === 'full') {
         return {
           ...state,
           followedPlanet: action.planet,
@@ -330,6 +360,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     case 'reset-camera':
       return { ...state, followedPlanet: null };
     case 'return-home':
+      if (state.gravityReturn) return updateExperience(updateExperience(state, { type: 'leave-gravity' }), action);
       return { ...state, isPlaying: false, followedPlanet: null };
     case 'set-bookmark':
       return {
@@ -339,6 +370,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         cameraRevision: state.cameraRevision + 1,
       };
     case 'set-view-option':
+      if (state.gravityReturn && (action.option === 'trails' || action.option === 'planeOverlays')) return state;
       return {
         ...state,
         viewOptions: { ...state.viewOptions, [action.option]: action.enabled },
@@ -347,11 +379,12 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
       return {
         ...state,
         reducedMotion: action.enabled,
-        viewOptions: action.enabled ? { ...state.viewOptions, trails: false } : state.viewOptions,
+        viewOptions: action.enabled && !state.gravityReturn ? { ...state.viewOptions, trails: false } : state.viewOptions,
       };
     case 'set-quality':
       return { ...state, quality: action.quality };
     case 'start-tour':
+      if (state.gravityReturn) return updateExperience(updateExperience(state, { type: 'leave-gravity' }), action);
       return {
         ...state,
         isPlaying: false,
@@ -387,6 +420,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     case 'skip-tour':
       return { ...state, isPlaying: false, tour: { ...state.tour, status: 'skipped' } };
     case 'replay':
+      if (state.gravityReturn) return updateExperience(updateExperience(state, { type: 'leave-gravity' }), action);
       return {
         ...state,
         currentTimeMs: state.startTimeMs,

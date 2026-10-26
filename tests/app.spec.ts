@@ -691,3 +691,206 @@ test('ends Planet follow when the guided journey changes chapter', async ({ page
   await expect(page.getByRole('button', { name: 'Follow Planet' })).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByRole('status').filter({ hasText: 'Stopped following Saturn.' })).toBeVisible();
 });
+
+for (const [origin, bookmark] of [['sun', 'outer'], ['space', 'full'], ['space', 'path']] as const) {
+  test(`explores Sun’s Gravity and restores ${origin}/${bookmark} context`, async ({ page }) => {
+    test.setTimeout(45_000);
+    await page.goto(`./?view=${origin}&body=earth&camera=${bookmark}`);
+    const earth = page.getByRole('button', { name: 'Select Earth', exact: true });
+    const saturn = page.getByRole('button', { name: 'Select Saturn', exact: true });
+    const preset = await settledBoundingBox(earth);
+    const canvas = await page.locator('canvas').boundingBox();
+    if (!canvas) throw new Error('Missing canvas');
+    await page.mouse.move(canvas.x + canvas.width * 0.3, canvas.y + canvas.height * 0.6);
+    await page.mouse.down();
+    await page.mouse.move(canvas.x + canvas.width * 0.3 + 65, canvas.y + canvas.height * 0.6 + 25, { steps: 8 });
+    await page.mouse.up();
+    const original = await settledBoundingBox(earth);
+    const originalSaturn = await settledBoundingBox(saturn);
+    expect(Math.hypot(original.x - preset.x, original.y - preset.y)).toBeGreaterThan(2);
+    const originalDistance = await page.locator('#planet-distance').textContent();
+    await page.getByRole('button', { name: 'View options', exact: true }).click();
+    await page.getByLabel('Motion trails', { exact: true }).check();
+    await page.getByLabel('Orbital-plane overlays', { exact: true }).check();
+    await page.getByRole('button', { name: 'Close options', exact: true }).click();
+    await page.getByRole('button', { name: 'Sun’s Gravity', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeFocused();
+    await expect(page.locator('#gravity-disclosure')).toHaveText('Schematic — distances compressed; well depths and body sizes exaggerated.');
+    await expect(page.getByRole('button', { name: 'Play simulation', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#planet-distance')).toHaveText(originalDistance ?? '');
+    await expect(page.getByText('Actual distance from Sun', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Share this view', exact: true })).toBeDisabled();
+    const before = await settledBoundingBox(earth);
+    await page.getByRole('button', { name: 'Close planet information', exact: true }).click();
+    const earthName = earth.locator('.body-marker__name');
+    const nameBox = await settledBoundingBox(earthName);
+    expect(Math.hypot(nameBox.x + nameBox.width / 2 - before.x - before.width / 2, nameBox.y + nameBox.height / 2 - before.y - before.height / 2)).toBeGreaterThan(22);
+    await earthName.click();
+    await expect(page.getByRole('heading', { name: 'Earth', exact: true })).toBeVisible();
+    await page.getByLabel('Simulated date across 165 years').fill('5000');
+    const scrubbed = await settledBoundingBox(earth);
+    expect(Math.hypot(before.x - scrubbed.x, before.y - scrubbed.y)).toBeGreaterThan(5);
+    await page.getByLabel('Simulated date across 165 years').fill('0');
+    const returned = await settledBoundingBox(earth);
+    expect(Math.hypot(before.x - returned.x, before.y - returned.y)).toBeLessThan(1);
+    await page.getByRole('button', { name: 'Follow Planet', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Stop Following Earth', exact: true })).toBeVisible();
+    await settledBoundingBox(earth);
+    await page.getByRole('button', { name: 'Stop Following Earth', exact: true }).click();
+    await page.getByRole('button', { name: 'Focus Camera', exact: true }).click();
+    const focused = await settledBoundingBox(earth);
+    expect(Math.abs(focused.x + focused.width / 2 - canvas.x - canvas.width / 2)).toBeLessThan(2);
+    expect(Math.abs(focused.y + focused.height / 2 - canvas.y - canvas.height / 2)).toBeLessThan(2);
+    await page.getByRole('button', { name: 'View options', exact: true }).click();
+    await expect(page.getByLabel('Motion trails', { exact: true })).toBeDisabled();
+    await expect(page.getByLabel('Orbital-plane overlays', { exact: true })).toBeDisabled();
+    await page.getByRole('button', { name: 'Reset View', exact: true }).click();
+    await page.getByRole('button', { name: 'Close options', exact: true }).click();
+    const reset = await settledBoundingBox(earth);
+    expect(Math.hypot(before.x - reset.x, before.y - reset.y)).toBeLessThan(1);
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Sun’s Gravity', exact: true })).toBeFocused();
+    const restored = await settledBoundingBox(earth);
+    expect(Math.hypot(original.x - restored.x, original.y - restored.y)).toBeLessThan(1);
+    const restoredSaturn = await settledBoundingBox(saturn);
+    expect(Math.hypot(originalSaturn.x - restoredSaturn.x, originalSaturn.y - restoredSaturn.y)).toBeLessThan(1);
+    await expect(page.getByRole('button', { name: 'Share this view', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'View options', exact: true }).click();
+    await expect(page.getByLabel('Motion trails', { exact: true })).toBeChecked();
+    await expect(page.getByLabel('Orbital-plane overlays', { exact: true })).toBeChecked();
+    await page.getByRole('button', { name: 'Close options', exact: true }).click();
+    for (let visit = 0; visit < 3; visit += 1) {
+      await page.getByRole('button', { name: 'Sun’s Gravity', exact: true }).click();
+      await page.getByRole('button', { name: 'Back', exact: true }).click();
+    }
+    await expect(page.getByRole('heading', { name: 'Earth', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Galaxy Overview', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Sun’s Gravity', exact: true })).toBeHidden();
+  });
+}
+
+test('Sun’s Gravity supports phone layout, quality tiers, explanation and shared playback', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('./');
+  await page.getByRole('button', { name: 'Begin Journey', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sun’s Gravity', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Skip journey', exact: true }).click();
+  await page.getByRole('button', { name: 'Sun’s Gravity', exact: true }).click();
+  for (const viewport of [{ width: 390, height: 844 }, { width: 820, height: 1180 }]) {
+    await page.setViewportSize(viewport);
+    await expect.poll(async () => {
+      const status = await page.locator('#scene-status').boundingBox();
+      const disclosure = await page.locator('#gravity-disclosure').boundingBox();
+      if (!status || !disclosure) throw new Error('Missing schematic explanation');
+      return disclosure.y - status.y - status.height;
+    }).toBeGreaterThanOrEqual(4);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Explain this view', exact: true }).click();
+  await expect(page.locator('#explain-copy')).toContainText('continue moving sideways');
+  await expect(page.locator('#explain-copy')).toContainText('do not roll on a membrane');
+  await page.locator('[data-close-panel="explain-panel"]').click();
+  await page.getByRole('button', { name: 'View options', exact: true }).click();
+  for (const quality of ['high', 'balanced', 'low']) {
+    await page.getByLabel('Visual quality').selectOption(quality);
+    await expect(page.getByLabel('Visual quality')).toHaveValue(quality);
+  }
+  await page.getByLabel('Labels', { exact: true }).uncheck();
+  await page.getByLabel('Orbit paths', { exact: true }).uncheck();
+  await page.getByRole('button', { name: 'Close options', exact: true }).click();
+  await expect(page.locator('#gravity-disclosure')).toBeInViewport();
+  await page.getByLabel('Speed', { exact: true }).selectOption('decade');
+  await page.getByRole('button', { name: 'Play simulation', exact: true }).click();
+  await page.getByLabel('Simulated date across 165 years').fill('1000');
+  await expect(page.getByRole('button', { name: 'Pause simulation', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Pause simulation', exact: true }).click();
+  await page.getByLabel('Simulated date across 165 years').fill('10000');
+  await expect(page.getByRole('heading', { name: 'Journey complete', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Replay from Today', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause simulation', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Play simulation', exact: true })).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('supports touch entry and Back from both Sun’s Gravity origins', async ({ browser, browserName, baseURL }) => {
+  test.skip(browserName === 'firefox', 'Playwright touch emulation is exercised in Chromium and WebKit.');
+  if (!baseURL) throw new Error('A repository-base URL is required');
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  await page.goto(baseURL);
+  await page.getByRole('button', { name: 'Explore Freely', exact: true }).tap();
+  for (const origin of ['Travel with Sun', 'Watch from Space']) {
+    await page.getByRole('button', { name: origin, exact: true }).tap();
+    await page.getByRole('button', { name: 'Sun’s Gravity', exact: true }).tap();
+    await expect(page.locator('#gravity-disclosure')).toBeInViewport();
+    const earth = page.getByRole('button', { name: 'Select Earth', exact: true });
+    const bodyBox = await settledBoundingBox(earth);
+    const name = earth.locator('.body-marker__name');
+    const nameBox = await settledBoundingBox(name);
+    expect(Math.hypot(nameBox.x + nameBox.width / 2 - bodyBox.x - bodyBox.width / 2, nameBox.y + nameBox.height / 2 - bodyBox.y - bodyBox.height / 2)).toBeGreaterThan(22);
+    await name.tap();
+    await expect(page.getByRole('heading', { name: 'Earth', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Close planet information', exact: true }).tap();
+    await page.getByRole('button', { name: 'Back', exact: true }).tap();
+    await expect(page.getByRole('button', { name: origin, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  }
+  await context.close();
+});
+
+
+test('Sun’s Gravity restores multiple camera markers after entry during an active Focus transition', async ({ page }) => {
+  await page.goto('./?view=sun&body=saturn&camera=outer');
+  const saturn = page.getByRole('button', { name: 'Select Saturn', exact: true });
+  const before = await settledBoundingBox(saturn);
+  await page.getByRole('button', { name: 'Focus Camera', exact: true }).click();
+  // Observe motion before the tween finishes, then capture and enter in one task.
+  await expect.poll(async () => {
+    const box = await saturn.boundingBox();
+    return box ? Math.hypot(box.x - before.x, box.y - before.y) : 0;
+  }, { intervals: [16] }).toBeGreaterThan(3);
+  const captured = await page.evaluate(() => new Promise<{ body: string; x: number; y: number }[]>((resolve) => requestAnimationFrame(() => {
+    const markers = ['sun', 'earth', 'saturn'].map((body) => {
+      const marker = document.querySelector<HTMLElement>(`[data-body="${body}"]`);
+      if (!marker) throw new Error(`Missing ${body}`);
+      const box = marker.getBoundingClientRect();
+      return { body, x: box.x, y: box.y };
+    });
+    const entry = document.getElementById('enter-gravity');
+    if (!(entry instanceof HTMLButtonElement)) throw new Error('Missing entry');
+    entry.click();
+    resolve(markers);
+  })));
+  const capturedSaturn = captured.find(({ body }) => body === 'saturn');
+  const canvas = await page.locator('canvas').boundingBox();
+  if (!capturedSaturn || !canvas) throw new Error('Missing camera measurement');
+  expect(Math.hypot(capturedSaturn.x + 22 - canvas.x - canvas.width / 2, capturedSaturn.y + 22 - canvas.y - canvas.height / 2)).toBeGreaterThan(3);
+  await page.getByRole('button', { name: 'Back', exact: true }).click();
+  for (const original of captured) {
+    const restored = await settledBoundingBox(page.locator(`[data-body="${original.body}"]`));
+    expect(Math.hypot(original.x - restored.x, original.y - restored.y)).toBeLessThan(1);
+  }
+});
+
+test('Sun’s Gravity stays absent from URL and stored preferences and reloads scientifically', async ({ page }) => {
+  await page.goto('./?view=space&body=earth&camera=path&date=2042-03-14T12%3A30%3A00.000Z');
+  const scientificUrl = page.url();
+  await page.getByRole('button', { name: 'Sun’s Gravity', exact: true }).click();
+  await page.getByLabel('Simulated date across 165 years').fill('4000');
+  await page.getByRole('button', { name: 'Select Saturn', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'View options', exact: true }).click();
+  await page.getByLabel('Visual quality').selectOption('low');
+  expect(page.url()).toBe(scientificUrl);
+  const saved = await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map((key) => [key, localStorage.getItem(key)])));
+  expect(Object.keys(saved)).toEqual(['orbital-journey:preferences:v1']);
+  expect(JSON.parse(saved['orbital-journey:preferences:v1'] ?? '{}')).toEqual({ reducedMotion: false, quality: 'low', labels: true, trails: false });
+  await page.reload();
+  await expect(page.locator('#app')).toHaveAttribute('data-gravity', 'false');
+  await expect(page.getByRole('button', { name: 'Watch from Space', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Sun’s Gravity', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Earth', exact: true })).toBeVisible();
+  expect(page.url()).toBe(scientificUrl);
+});
