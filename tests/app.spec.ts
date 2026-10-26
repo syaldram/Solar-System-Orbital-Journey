@@ -4,19 +4,33 @@ type Box = NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>;
 
 // Camera tweens and OrbitControls damping keep moving after input ends, and
 // slower CI renderers stretch that motion out, so wait for the marker to rest.
+// Damping decays per rendered frame, so a wall-clock threshold can pass while a
+// slow renderer is still pixels from rest; sample once per rendered frame instead.
 async function settledBoundingBox(locator: Locator): Promise<Box> {
-  let previous: Box | null = null;
-  let stableSamples = 0;
-  await expect.poll(async () => {
-    const current = await locator.boundingBox();
-    const moved = !current || !previous
-      || Math.hypot(current.x - previous.x, current.y - previous.y) >= 0.25;
-    stableSamples = moved ? 0 : stableSamples + 1;
-    previous = current;
-    return stableSamples;
-  }, { timeout: 15_000, intervals: [150] }).toBeGreaterThanOrEqual(3);
-  if (!previous) throw new Error('Marker has no bounding box');
-  return previous;
+  return locator.evaluate((element) => new Promise<Box>((resolve, reject) => {
+    const deadline = performance.now() + 20_000;
+    let previous: DOMRect | null = null;
+    let stillFrames = 0;
+    let stillSince = 0;
+    const sample = (now: number) => {
+      const current = element.getBoundingClientRect();
+      const visible = current.width > 0 || current.height > 0;
+      const still = visible && previous !== null
+        && Math.hypot(current.x - previous.x, current.y - previous.y) < 0.01;
+      if (!still) stillSince = now;
+      stillFrames = still ? stillFrames + 1 : 0;
+      previous = current;
+      // Tweens ease in, so their first fast frames can look still; also require wall time.
+      if (stillFrames >= 5 && now - stillSince >= 300) {
+        resolve({ x: current.x, y: current.y, width: current.width, height: current.height });
+      } else if (now > deadline) {
+        reject(new Error('Marker did not settle'));
+      } else {
+        requestAnimationFrame(sample);
+      }
+    };
+    requestAnimationFrame(sample);
+  }));
 }
 
 test('offers a still choice between the journey and free exploration', async ({ page }) => {
@@ -694,7 +708,7 @@ test('ends Planet follow when the guided journey changes chapter', async ({ page
 
 for (const [origin, bookmark] of [['sun', 'outer'], ['space', 'full'], ['space', 'path']] as const) {
   test(`explores Sun’s Gravity and restores ${origin}/${bookmark} context`, async ({ page }) => {
-    test.setTimeout(45_000);
+    test.setTimeout(120_000);
     await page.goto(`./?view=${origin}&body=earth&camera=${bookmark}`);
     const earth = page.getByRole('button', { name: 'Select Earth', exact: true });
     const saturn = page.getByRole('button', { name: 'Select Saturn', exact: true });
@@ -844,24 +858,30 @@ test('Sun’s Gravity restores multiple camera markers after entry during an act
   await page.goto('./?view=sun&body=saturn&camera=outer');
   const saturn = page.getByRole('button', { name: 'Select Saturn', exact: true });
   const before = await settledBoundingBox(saturn);
-  await page.getByRole('button', { name: 'Focus Camera', exact: true }).click();
-  // Observe motion before the tween finishes, then capture and enter in one task.
-  await expect.poll(async () => {
-    const box = await saturn.boundingBox();
-    return box ? Math.hypot(box.x - before.x, box.y - before.y) : 0;
-  }, { intervals: [16] }).toBeGreaterThan(3);
-  const captured = await page.evaluate(() => new Promise<{ body: string; x: number; y: number }[]>((resolve) => requestAnimationFrame(() => {
-    const markers = ['sun', 'earth', 'saturn'].map((body) => {
-      const marker = document.querySelector<HTMLElement>(`[data-body="${body}"]`);
-      if (!marker) throw new Error(`Missing ${body}`);
-      const box = marker.getBoundingClientRect();
-      return { body, x: box.x, y: box.y };
-    });
+  // Start Focus, then capture and enter on the first rendered frame that shows
+  // motion, so slow renderers cannot finish the tween between steps.
+  const captured = await page.evaluate((start) => new Promise<{ body: string; x: number; y: number }[]>((resolve) => {
+    const focus = document.getElementById('focus-planet');
     const entry = document.getElementById('enter-gravity');
-    if (!(entry instanceof HTMLButtonElement)) throw new Error('Missing entry');
-    entry.click();
-    resolve(markers);
-  })));
+    if (!(focus instanceof HTMLButtonElement) || !(entry instanceof HTMLButtonElement)) throw new Error('Missing controls');
+    focus.click();
+    const sample = () => {
+      const saturnBox = document.querySelector<HTMLElement>('[data-body="saturn"]')?.getBoundingClientRect();
+      if (!saturnBox || Math.hypot(saturnBox.x - start.x, saturnBox.y - start.y) <= 3) {
+        requestAnimationFrame(sample);
+        return;
+      }
+      const markers = ['sun', 'earth', 'saturn'].map((body) => {
+        const marker = document.querySelector<HTMLElement>(`[data-body="${body}"]`);
+        if (!marker) throw new Error(`Missing ${body}`);
+        const box = marker.getBoundingClientRect();
+        return { body, x: box.x, y: box.y };
+      });
+      entry.click();
+      resolve(markers);
+    };
+    requestAnimationFrame(sample);
+  }), { x: before.x, y: before.y });
   const capturedSaturn = captured.find(({ body }) => body === 'saturn');
   const canvas = await page.locator('canvas').boundingBox();
   if (!capturedSaturn || !canvas) throw new Error('Missing camera measurement');
