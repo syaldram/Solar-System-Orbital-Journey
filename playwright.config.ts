@@ -5,6 +5,8 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
+  // CI renders WebGL in software; camera damping settles per frame, so waits run longer.
+  timeout: process.env.CI ? 90_000 : 30_000,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {

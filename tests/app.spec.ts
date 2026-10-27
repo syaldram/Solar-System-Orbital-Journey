@@ -6,25 +6,30 @@ type Box = NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>;
 // slower CI renderers stretch that motion out, so wait for the marker to rest.
 // Damping decays per rendered frame, so a wall-clock threshold can pass while a
 // slow renderer is still pixels from rest; sample once per rendered frame instead.
+// Settling takes a fixed number of frames, so the budget is frames, not seconds.
+// The 0.02px step sits above WebKit's 1/64px layout snapping and leaves < 0.4px of travel.
 async function settledBoundingBox(locator: Locator): Promise<Box> {
   return locator.evaluate((element) => new Promise<Box>((resolve, reject) => {
-    const deadline = performance.now() + 20_000;
+    const startedAt = performance.now();
+    let frames = 0;
     let previous: DOMRect | null = null;
     let stillFrames = 0;
     let stillSince = 0;
     const sample = (now: number) => {
+      frames += 1;
       const current = element.getBoundingClientRect();
       const visible = current.width > 0 || current.height > 0;
       const still = visible && previous !== null
-        && Math.hypot(current.x - previous.x, current.y - previous.y) < 0.01;
+        && Math.hypot(current.x - previous.x, current.y - previous.y) < 0.02;
       if (!still) stillSince = now;
       stillFrames = still ? stillFrames + 1 : 0;
       previous = current;
       // Tweens ease in, so their first fast frames can look still; also require wall time.
       if (stillFrames >= 5 && now - stillSince >= 300) {
         resolve({ x: current.x, y: current.y, width: current.width, height: current.height });
-      } else if (now > deadline) {
-        reject(new Error('Marker did not settle'));
+      } else if (frames > 1_000) {
+        const seconds = (now - startedAt) / 1_000;
+        reject(new Error(`Marker did not settle in ${frames} frames (${seconds.toFixed(1)}s)`));
       } else {
         requestAnimationFrame(sample);
       }
@@ -214,7 +219,8 @@ test('replays or dismisses Solar-System completion without starting the guided t
   await timeline.fill('10000');
   await expect(page.getByRole('heading', { name: 'Journey complete' })).toBeVisible();
   await page.getByRole('button', { name: 'Replay from Today' }).click();
-  await expect(timeline).toHaveValue('0');
+  // Replay starts playing at once, so slow runners may already be past step 0.
+  await expect.poll(async () => Number(await timeline.inputValue())).toBeLessThan(1_000);
   await expect(page.getByRole('button', { name: 'Pause simulation' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByText('Chapter 1 of 5')).toBeHidden();
 
