@@ -13,6 +13,7 @@ import {
   getAlongPathMotion,
   getGalacticOrbitPresentation,
   updateExperience,
+  transitionExperience,
   type ExperienceAction,
   type ExperienceState,
 } from './experience/experience-state';
@@ -118,7 +119,7 @@ const appInterface = new AppInterface({
   onShare: () => void shareCurrentView(),
   onFocus: (body) => {
     dispatch({ type: 'focus-camera' });
-    if (!state.gravityReturn && (state.frame === 'galaxy' || state.cameraBookmark === 'full')) {
+    if (state.presentation.kind === 'scientific' && (state.frame === 'galaxy' || state.cameraBookmark === 'full')) {
       dispatch({ type: 'set-frame', frame: 'space' });
       dispatch({ type: 'set-bookmark', bookmark: 'path' });
     }
@@ -156,7 +157,8 @@ try {
 function dispatch(action: ExperienceAction): void {
   const previousState = state;
   const previousTourKey = `${state.tour.status}:${state.tour.chapter}`;
-  let next = updateExperience(state, action);
+  const transition = transitionExperience(state, action);
+  let next = transition.state;
   const nextTourKey = `${next.tour.status}:${next.tour.chapter}`;
   if (nextTourKey !== previousTourKey && next.tour.status === 'running') {
     next = applyCurrentTourChapter(next);
@@ -166,6 +168,7 @@ function dispatch(action: ExperienceAction): void {
     persistPreferences(state);
   }
   const now = performance.now();
+  if (transition.handoff) scene?.handlePresentationHandoff(transition.handoff, state, now);
   if (
     action.type !== 'advance' ||
     now - lastInterfaceRenderAt >= 100 ||
@@ -174,11 +177,12 @@ function dispatch(action: ExperienceAction): void {
   ) {
     lastInterfaceRenderAt = now;
     renderInterface();
+    if (transition.handoff) appInterface.handlePresentationHandoff(transition.handoff);
   }
   if (previousState.followedPlanet !== state.followedPlanet) {
     if (state.followedPlanet) {
       const name = getPlanetProfile(state.followedPlanet).name;
-      const movedFromFullJourney = !state.gravityReturn && previousState.frame === 'space' && previousState.cameraBookmark === 'full';
+      const movedFromFullJourney = state.presentation.kind === 'scientific' && previousState.frame === 'space' && previousState.cameraBookmark === 'full';
       appInterface.showToast(movedFromFullJourney
         ? `Switched to the Along the Path camera to follow ${name}.`
         : `Camera is now following ${name}.`);
@@ -196,7 +200,7 @@ function renderInterface(): void {
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
-      state.gravityReturn || state.frame === 'sun' ? 'sun' : 'space',
+      state.presentation.kind === 'gravity' || state.frame === 'sun' ? 'sun' : 'space',
     );
     const planet = snapshot.planets.find(({ id }) => id === state.selectedBody);
     if (planet) {
@@ -217,7 +221,7 @@ function renderInterface(): void {
 }
 
 async function shareCurrentView(): Promise<void> {
-  if (state.gravityReturn) {
+  if (state.presentation.kind === 'gravity') {
     appInterface.showToast('Sharing is unavailable in this session-only schematic. Use Back to share a scientific view.');
     return;
   }
@@ -261,13 +265,13 @@ function animate(now: number): void {
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
-      state.gravityReturn || state.frame === 'sun' ? 'sun' : 'space',
+      state.presentation.kind === 'gravity' || state.frame === 'sun' ? 'sun' : 'space',
     );
     const galacticPresentation = getGalacticOrbitPresentation(state);
     scene.render(
       {
         snapshot,
-        gravity: state.gravityReturn !== null,
+        gravity: state.presentation.kind === 'gravity',
         frame: state.frame,
         bookmark: state.cameraBookmark,
         cameraRevision: state.cameraRevision,

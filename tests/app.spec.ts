@@ -920,3 +920,103 @@ test('Sun’s Gravity stays absent from URL and stored preferences and reloads s
   await expect(page.getByRole('heading', { name: 'Earth', exact: true })).toBeVisible();
   expect(page.url()).toBe(scientificUrl);
 });
+
+test('Sun’s Gravity processes rapid entry/Back handoffs before rendering and captures each new session', async ({ page }) => {
+  await page.goto('./?view=space&body=earth&camera=path');
+  const earth = page.getByRole('button', { name: 'Select Earth', exact: true });
+  const original = await settledBoundingBox(earth);
+  const originalSaturn = await settledBoundingBox(page.locator('[data-body="saturn"]'));
+  await page.evaluate(() => {
+    const entry = document.getElementById('enter-gravity');
+    const back = document.getElementById('leave-gravity');
+    if (!(entry instanceof HTMLButtonElement) || !(back instanceof HTMLButtonElement)) throw new Error('Missing Gravity controls');
+    entry.click();
+    entry.click(); // Duplicate entry cannot replace the scientific context.
+    back.click();
+    entry.click(); // Back → enter captures the restored scientific pose synchronously.
+  });
+  await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeFocused();
+  await settledBoundingBox(earth);
+  await page.evaluate(() => {
+    const entry = document.getElementById('enter-gravity');
+    const back = document.getElementById('leave-gravity');
+    if (!(entry instanceof HTMLButtonElement) || !(back instanceof HTMLButtonElement)) throw new Error('Missing Gravity controls');
+    back.click();
+    entry.click();
+    back.click();
+    back.click(); // Back without a session has no restoration effect.
+  });
+  await expect(page.getByRole('button', { name: 'Sun’s Gravity', exact: true })).toBeFocused();
+  for (const [body, before] of [['earth', original], ['saturn', originalSaturn]] as const) {
+    const after = await settledBoundingBox(page.locator(`[data-body="${body}"]`));
+    expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeLessThan(1);
+  }
+});
+
+for (const [gesture, button] of [['rotation', 'left'], ['pan', 'right']] as const) {
+  test(`Sun’s Gravity captures the visible camera during ${gesture} damping without carrying motion across Back`, async ({ page }) => {
+    await page.goto('./?view=sun&body=earth&camera=outer');
+    const earth = page.getByRole('button', { name: 'Select Earth', exact: true });
+    await settledBoundingBox(earth);
+    const canvas = await page.locator('canvas').boundingBox();
+    if (!canvas) throw new Error('Missing canvas');
+    await page.mouse.move(canvas.x + canvas.width * 0.35, canvas.y + canvas.height * 0.55);
+    await page.mouse.down({ button });
+    await page.mouse.move(canvas.x + canvas.width * 0.35 + 85, canvas.y + canvas.height * 0.55 + 30, { steps: 3 });
+    await page.mouse.up({ button });
+    const captured = await page.evaluate(() => new Promise<{
+      body: string; x: number; y: number; movement: number;
+    }[]>((resolve) => {
+      const sampleMarkers = () => ['earth', 'saturn'].map((body) => {
+        const marker = document.querySelector<HTMLElement>(`[data-body="${body}"]`);
+        if (!marker) throw new Error(`Missing ${body}`);
+        const box = marker.getBoundingClientRect();
+        return { body, x: box.x, y: box.y };
+      });
+      requestAnimationFrame(() => {
+        const previous = sampleMarkers();
+        requestAnimationFrame(() => {
+          // Consecutive rendered frames prove released-drag momentum is still active at capture.
+          const markers = sampleMarkers().map((marker, index) => ({
+            ...marker,
+            movement: Math.hypot(marker.x - previous[index].x, marker.y - previous[index].y),
+          }));
+          document.getElementById('enter-gravity')?.click();
+          resolve(markers);
+        });
+      });
+    }));
+    for (const marker of captured) expect(marker.movement).toBeGreaterThan(0.1);
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    for (const original of captured) {
+      const restored = await settledBoundingBox(page.locator(`[data-body="${original.body}"]`));
+      expect(Math.hypot(restored.x - original.x, restored.y - original.y)).toBeLessThan(1);
+    }
+  });
+}
+
+test('Sun’s Gravity discards on Home and journey actions without focusing its hidden entry button', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('./?view=space&body=earth&camera=outer');
+  await page.getByRole('button', { name: 'Sun’s Gravity', exact: true }).click();
+  await page.getByRole('button', { name: 'Return to opening screen', exact: true }).click();
+  await expect(page.locator('#app')).toHaveAttribute('data-gravity', 'false');
+  await expect(page.getByRole('button', { name: 'Begin Journey', exact: true })).toBeVisible();
+  await expect(page.locator('#enter-gravity')).not.toBeFocused();
+  await page.getByRole('button', { name: 'Explore Freely', exact: true }).click();
+  const earth = page.getByRole('button', { name: 'Select Earth', exact: true });
+  const fresh = await settledBoundingBox(earth);
+  await page.getByRole('button', { name: 'Sun’s Gravity', exact: true }).click();
+  await page.getByRole('button', { name: 'Back', exact: true }).click();
+  const restored = await settledBoundingBox(earth);
+  expect(Math.hypot(restored.x - fresh.x, restored.y - fresh.y)).toBeLessThan(1);
+  // Invoke the existing journey controls in a single task to cover programmatic exits.
+  for (const destination of ['begin-journey', 'replay-journey']) {
+    await page.getByRole('button', { name: 'Sun’s Gravity', exact: true }).click();
+    await page.evaluate((id) => document.getElementById(id)?.click(), destination);
+    await expect(page.locator('#app')).toHaveAttribute('data-gravity', 'false');
+    await expect(page.locator('#enter-gravity')).not.toBeFocused();
+    await expect(page.getByText('Chapter 1 of 5')).toBeVisible();
+    await page.getByRole('button', { name: 'Skip journey', exact: true }).click();
+  }
+});

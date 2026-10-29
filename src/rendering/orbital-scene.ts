@@ -6,6 +6,8 @@ import { eclipticToGalactic, type SystemSnapshot } from '../astronomy/reference-
 import type {
   AlongPathMotion,
   CameraBookmark,
+  ExperienceState,
+  PresentationHandoff,
   QualityPreference,
   SelectableBody,
   ViewMode,
@@ -248,6 +250,17 @@ export class OrbitalScene {
     this.renderer.render(this.scene, this.camera);
     const adaptedQuality = this.qualityMonitor.sample(state.quality, nowMs);
     if (adaptedQuality) this.onQualityAdapted(adaptedQuality);
+  }
+
+  handlePresentationHandoff(handoff: PresentationHandoff, state: ExperienceState, nowMs: number): void {
+    this.cameraController.handlePresentationHandoff(handoff, {
+      gravity: state.presentation.kind === 'gravity',
+      frame: state.frame,
+      bookmark: state.cameraBookmark,
+      cameraRevision: state.cameraRevision,
+      followedPlanet: state.followedPlanet,
+      reducedMotion: state.reducedMotion,
+    }, nowMs);
   }
 
   focus(body: SelectableBody): void {

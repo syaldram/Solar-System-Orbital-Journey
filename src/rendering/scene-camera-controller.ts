@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import type { PlanetId } from '../astronomy/solar-system';
-import type { CameraBookmark, SelectableBody, ViewMode } from '../experience/experience-state';
+import type { CameraBookmark, PresentationHandoff, SelectableBody, ViewMode } from '../experience/experience-state';
 import { SUN_DISPLAY_RADIUS, planetDisplayRadius } from './display-scale';
 
 const CAMERA_TWEEN_DURATION_MS = 800;
@@ -19,8 +19,7 @@ export interface SceneCameraState {
 export class SceneCameraController {
   readonly controls: OrbitControls;
 
-  private gravity = false;
-  private returnPose: { position: THREE.Vector3; target: THREE.Vector3; revision: number } | null = null;
+  private returnPose: { position: THREE.Vector3; target: THREE.Vector3; sessionId: number } | null = null;
   private currentState: SceneCameraState | null = null;
   private currentBookmark: CameraBookmark | null = null;
   private currentFrame: ViewMode | null = null;
@@ -59,32 +58,52 @@ export class SceneCameraController {
   }
 
   render(state: SceneCameraState, nowMs: number): void {
-    const handoff = Boolean(state.gravity) !== this.gravity;
-    if (handoff) {
-      // Flush damping before capturing or restoring a camera, then cancel all moves.
-      this.controls.enableDamping = false;
-      this.controls.update();
-      this.controls.enableDamping = true;
-      if (state.gravity) this.returnPose = { position: this.camera.position.clone(), target: this.controls.target.clone(), revision: state.cameraRevision };
-      this.pendingFocus = null;
-      this.cameraTween = null;
-      this.lastFollowPosition = null;
-      this.currentCameraRevision = -1;
-      this.gravity = Boolean(state.gravity);
-    }
     this.currentState = state;
     this.syncFollowState(state.followedPlanet);
     this.applyConstraints(state.frame);
     this.applyComposition(state, nowMs);
-    if (handoff && !state.gravity && this.returnPose && state.cameraRevision === this.returnPose.revision) {
-      this.cameraTween = null;
-      this.camera.position.copy(this.returnPose.position);
-      this.controls.target.copy(this.returnPose.target);
-    }
-    if (handoff && !state.gravity) this.returnPose = null;
     this.applyPendingFocus(nowMs);
     this.updateTween(state.reducedMotion, nowMs);
     this.applyFollow(state.followedPlanet, state.frame);
+    this.controls.update();
+  }
+
+  handlePresentationHandoff(handoff: PresentationHandoff, state: SceneCameraState, nowMs: number): void {
+    if (handoff.kind === 'enter' ? this.returnPose !== null : this.returnPose?.sessionId !== handoff.sessionId) return;
+
+    // Preserve the visible pose before draining OrbitControls' private damping deltas.
+    const position = this.camera.position.clone();
+    const target = this.controls.target.clone();
+    const damping = this.controls.enableDamping;
+    this.controls.enableDamping = false;
+    this.controls.update();
+    this.camera.position.copy(position);
+    this.controls.target.copy(target);
+    this.controls.update();
+    this.controls.enableDamping = damping;
+    this.pendingFocus = null;
+    this.cameraTween = null;
+    this.lastFollowPosition = null;
+    this.followedPlanet = null;
+    this.currentState = state;
+    this.applyConstraints(state.frame);
+
+    if (handoff.kind === 'enter') {
+      this.returnPose = { position, target, sessionId: handoff.sessionId };
+    } else if (handoff.kind === 'back' && this.returnPose) {
+      this.camera.position.copy(this.returnPose.position);
+      this.controls.target.copy(this.returnPose.target);
+      // A later render must not compose over the restored arbitrary camera pose.
+      this.currentBookmark = state.bookmark;
+      this.currentFrame = state.frame;
+      this.currentCameraRevision = state.cameraRevision;
+    }
+    if (handoff.kind !== 'back') {
+      this.currentCameraRevision = -1;
+      this.applyComposition(state, nowMs);
+      this.updateTween(state.reducedMotion, nowMs);
+    }
+    if (handoff.kind !== 'enter') this.returnPose = null;
     this.controls.update();
   }
 

@@ -6,6 +6,7 @@ import type {
   ExperienceAction,
   ExperienceState,
   GalacticPlaybackSpeed,
+  PresentationHandoff,
   SelectableBody,
   ViewMode,
   ViewOptions,
@@ -91,7 +92,6 @@ export class AppInterface {
   private selectedBody: SelectableBody | null = null;
   private toastTimer = 0;
   private entered = false;
-  private gravity = false;
   private currentFrame: ViewMode = 'sun';
   private renderedTimelineFrame: ViewMode | null = null;
 
@@ -215,10 +215,13 @@ export class AppInterface {
     });
   }
 
+  handlePresentationHandoff(handoff: PresentationHandoff): void {
+    if (handoff.kind === 'discard') return;
+    element<HTMLButtonElement>(handoff.kind === 'enter' ? 'leave-gravity' : 'enter-gravity').focus();
+  }
+
   render(state: ExperienceState, pathMotion: AlongPathMotion): void {
-    const gravity = state.gravityReturn !== null;
-    const handoff = gravity !== this.gravity;
-    this.gravity = gravity;
+    const gravity = state.presentation.kind === 'gravity';
     this.app.dataset.gravity = String(gravity);
     element<HTMLElement>('enter-gravity').hidden = gravity || state.frame === 'galaxy' || state.tour.status === 'running';
     element<HTMLElement>('leave-gravity').hidden = !gravity;
@@ -230,7 +233,6 @@ export class AppInterface {
     if (gravity) share.setAttribute('aria-describedby', 'gravity-share-reason');
     else share.removeAttribute('aria-describedby');
     document.querySelectorAll<HTMLElement>('.view-switcher, .camera-bookmarks').forEach((navigation) => { navigation.hidden = gravity; });
-    if (handoff) element<HTMLButtonElement>(gravity ? 'leave-gravity' : 'enter-gravity').focus();
     element<HTMLElement>('planet-distance-label').textContent = gravity ? 'Actual distance from Sun' : 'Distance now';
     element<HTMLElement>('planet-scale-note').textContent = gravity
       ? 'Physical values are calculated from the original JPL model. Displayed spacing is compressed; well depths and body sizes are exaggerated.'

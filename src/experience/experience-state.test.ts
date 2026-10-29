@@ -5,6 +5,8 @@ import {
   getAlongPathMotion,
   getGalacticOrbitPresentation,
   updateExperience,
+  transitionExperience,
+  type ExperienceAction,
 } from './experience-state';
 import { applyCurrentTourChapter } from './tour';
 
@@ -428,7 +430,7 @@ describe('Sun’s Gravity session', () => {
       state = updateExperience(state, { type: 'scrub', timeMs: date + 1_000 });
       expect(state.isPlaying).toBe(true);
       state = updateExperience(state, { type: 'leave-gravity' });
-      expect(state).toMatchObject({ frame, selectedBody: 'earth', cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, gravityReturn: null, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
+      expect(state).toMatchObject({ frame, selectedBody: 'earth', cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, presentation: { kind: 'scientific' }, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
       expect(state.trailRevision).toBe(entered.trailRevision + 1);
     }
   });
@@ -445,7 +447,7 @@ describe('Sun’s Gravity session', () => {
     const entered = updateExperience(withTrails, { type: 'enter-gravity' });
     expect(updateExperience(entered, { type: 'set-view-option', option: 'trails', enabled: false })).toBe(entered);
     for (const action of [{ type: 'return-home' }, { type: 'start-tour' }, { type: 'replay' }] as const) {
-      expect(updateExperience(entered, action).gravityReturn).toBeNull();
+      expect(updateExperience(entered, action).presentation.kind).toBe('scientific');
     }
     expect(updateExperience(entered, { type: 'leave-gravity' }).viewOptions.trails).toBe(true);
     const reduced = updateExperience(entered, { type: 'set-reduced-motion', enabled: true });
@@ -455,5 +457,49 @@ describe('Sun’s Gravity session', () => {
     expect(state.isPlaying).toBe(false);
     state = updateExperience(state, { type: 'replay-solar' });
     expect(state).toMatchObject({ isPlaying: true, currentTimeMs: state.startTimeMs, galacticElapsedMillionYears: 0 });
+  });
+});
+
+
+describe('accepted presentation lifecycle intent', () => {
+  it('emits every accepted handoff in order with monotonically fresh session IDs', () => {
+    let state = createInitialExperienceState(TODAY);
+    const handoffs = [];
+    for (const type of ['enter-gravity', 'enter-gravity', 'leave-gravity', 'leave-gravity', 'enter-gravity', 'return-home', 'enter-gravity', 'leave-gravity'] as const) {
+      const transition = transitionExperience(state, { type });
+      state = transition.state;
+      if (transition.handoff) handoffs.push(transition.handoff);
+    }
+    expect(handoffs).toEqual([
+      { kind: 'enter', presentation: 'gravity', sessionId: 1 },
+      { kind: 'back', presentation: 'gravity', sessionId: 1 },
+      { kind: 'enter', presentation: 'gravity', sessionId: 2 },
+      { kind: 'discard', presentation: 'gravity', sessionId: 2 },
+      { kind: 'enter', presentation: 'gravity', sessionId: 3 },
+      { kind: 'back', presentation: 'gravity', sessionId: 3 },
+    ]);
+  });
+
+  it('emits no intent for rejected entry or Back without a session', () => {
+    const initial = createInitialExperienceState(TODAY);
+    for (const state of [initial, updateExperience(initial, { type: 'set-frame', frame: 'galaxy' }), updateExperience(initial, { type: 'start-tour' })]) {
+      expect(transitionExperience(state, { type: 'leave-gravity' }).handoff).toBeNull();
+      if (state !== initial) expect(transitionExperience(state, { type: 'enter-gravity' }).handoff).toBeNull();
+    }
+    const entered = updateExperience(initial, { type: 'enter-gravity' });
+    expect(transitionExperience(entered, { type: 'enter-gravity' })).toEqual({ state: entered, handoff: null });
+  });
+
+  it.each<ExperienceAction>([{ type: 'return-home' }, { type: 'start-tour' }, { type: 'replay' }, { type: 'set-frame', frame: 'galaxy' }, { type: 'set-frame', frame: 'sun' }])('discards rather than restoring on $type', (action) => {
+    let state = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'earth' });
+    state = updateExperience(state, { type: 'enter-gravity' });
+    state = updateExperience(state, { type: 'select', body: 'saturn' });
+    const transition = transitionExperience(state, action);
+    expect(transition.handoff).toEqual({ kind: 'discard', presentation: 'gravity', sessionId: 1 });
+    expect(transition.state.presentation).toEqual({ kind: 'scientific' });
+    expect(transition.state.selectedBody).toBe(action.type === 'set-frame' && action.frame === 'galaxy' ? null : 'saturn');
+    expect(transition.state.followedPlanet).toBeNull();
+    expect(transition.state.trailRevision).toBeGreaterThan(state.trailRevision);
+    expect(transitionExperience(transition.state, { type: 'leave-gravity' }).handoff).toBeNull();
   });
 });
