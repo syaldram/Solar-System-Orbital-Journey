@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createInitialExperienceState,
+  selectedBody,
   getAlongPathMotion,
   getGalacticOrbitPresentation,
   updateExperience,
@@ -370,9 +371,9 @@ describe('experience state', () => {
 
     const galaxy = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
 
-    expect(galaxy.selectedBody).toBeNull();
+    expect(selectedBody(galaxy)).toBeNull();
     expect(galaxy.followedPlanet).toBeNull();
-    expect(updateExperience(galaxy, { type: 'select', body: 'saturn' }).selectedBody).toBeNull();
+    expect(selectedBody(updateExperience(galaxy, { type: 'select', body: 'saturn' }))).toBeNull();
   });
 
   it('keeps Along the Path distance accurate while stabilizing only high-speed guide flow', () => {
@@ -430,7 +431,7 @@ describe('Sun’s Gravity session', () => {
       state = updateExperience(state, { type: 'scrub', timeMs: date + 1_000 });
       expect(state.isPlaying).toBe(true);
       state = updateExperience(state, { type: 'leave-gravity' });
-      expect(state).toMatchObject({ frame, selectedBody: 'earth', cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, presentation: { kind: 'scientific' }, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
+      expect(state).toMatchObject({ frame, selection: { kind: 'body', body: 'earth' }, cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, presentation: { kind: 'scientific' }, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
       expect(state.trailRevision).toBe(entered.trailRevision + 1);
     }
   });
@@ -497,7 +498,7 @@ describe('accepted presentation lifecycle intent', () => {
     const transition = transitionExperience(state, action);
     expect(transition.handoff).toEqual({ kind: 'discard', presentation: 'gravity', sessionId: 1 });
     expect(transition.state.presentation).toEqual({ kind: 'scientific' });
-    expect(transition.state.selectedBody).toBe(action.type === 'set-frame' && action.frame === 'galaxy' ? null : 'saturn');
+    expect(selectedBody(transition.state)).toBe(action.type === 'set-frame' && action.frame === 'galaxy' ? null : 'saturn');
     expect(transition.state.followedPlanet).toBeNull();
     expect(transition.state.trailRevision).toBeGreaterThan(state.trailRevision);
     expect(transitionExperience(transition.state, { type: 'leave-gravity' }).handoff).toBeNull();
@@ -529,7 +530,7 @@ describe('Heliosphere session', () => {
       state = updateExperience(state, { type: 'scrub', timeMs: date + 1_000 });
       expect(state.isPlaying).toBe(false);
       state = updateExperience(state, { type: 'leave-heliosphere' });
-      expect(state).toMatchObject({ frame, selectedBody: 'earth', cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, presentation: { kind: 'scientific' }, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
+      expect(state).toMatchObject({ frame, selection: { kind: 'body', body: 'earth' }, cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, presentation: { kind: 'scientific' }, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
       expect(state.trailRevision).toBe(entered.trailRevision + 1);
     }
   });
@@ -596,9 +597,40 @@ describe('accepted heliosphere lifecycle intent', () => {
     const transition = transitionExperience(state, action);
     expect(transition.handoff).toEqual({ kind: 'discard', presentation: 'heliosphere', sessionId: 1 });
     expect(transition.state.presentation).toEqual({ kind: 'scientific' });
-    expect(transition.state.selectedBody).toBe(action.type === 'set-frame' && action.frame === 'galaxy' ? null : 'saturn');
+    expect(selectedBody(transition.state)).toBe(action.type === 'set-frame' && action.frame === 'galaxy' ? null : 'saturn');
     expect(transition.state.followedPlanet).toBeNull();
     expect(transition.state.trailRevision).toBeGreaterThan(state.trailRevision);
     expect(transitionExperience(transition.state, { type: 'leave-heliosphere' }).handoff).toBeNull();
   });
+});
+
+it('owns a single tagged selection and four isolated heliosphere session layers', () => {
+  const scientific = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'earth' });
+  expect(updateExperience(scientific, { type: 'select-region', region: 'solar-wind' })).toBe(scientific);
+  let state = updateExperience(scientific, { type: 'enter-heliosphere' });
+  state = updateExperience(state, { type: 'toggle-planet-follow', planet: 'earth' });
+  state = updateExperience(state, { type: 'play' });
+  const cameraRevision = state.cameraRevision;
+  for (const region of ['solar-wind', 'termination-shock', 'heliosheath', 'heliopause', 'interstellar-space'] as const) {
+    state = updateExperience(state, { type: 'select-region', region });
+    expect(state.selection).toEqual({ kind: 'region', region });
+    expect(selectedBody(state)).toBeNull();
+    expect(state.followedPlanet).toBeNull();
+    expect(state.isPlaying).toBe(true);
+    expect(state.cameraRevision).toBe(cameraRevision);
+  }
+  for (const layer of ['outerHeliosphere', 'terminationShock', 'orbitPaths', 'labels'] as const) {
+    const beforeLayers = state.presentation.kind === 'heliosphere' ? state.presentation.layers : null;
+    state = updateExperience(state, { type: 'set-heliosphere-layer', layer, enabled: false });
+    expect(state.presentation).toMatchObject({ layers: { ...beforeLayers, [layer]: false } });
+    expect(state.selection).toEqual({ kind: 'region', region: 'interstellar-space' });
+    expect(updateExperience(state, { type: 'enter-heliosphere' })).toBe(state);
+  }
+  expect(state.viewOptions).toEqual(scientific.viewOptions);
+  expect(updateExperience(state, { type: 'return-home' }).selection).toEqual({ kind: 'none' });
+  expect(updateExperience(state, { type: 'start-tour' }).selection).toEqual({ kind: 'none' });
+  state = updateExperience(state, { type: 'leave-heliosphere' });
+  expect(selectedBody(state)).toBe('earth');
+  state = updateExperience(state, { type: 'enter-heliosphere' });
+  expect(state.presentation).toMatchObject({ layers: { outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true } });
 });

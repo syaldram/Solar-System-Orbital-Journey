@@ -8,6 +8,22 @@ export type CameraBookmark = 'hero' | 'inner' | 'outer' | 'path' | 'ecliptic' | 
 export type QualityPreference = 'auto' | 'high' | 'balanced' | 'low';
 export type SelectableBody = 'sun' | PlanetId;
 
+export const HELIOSPHERE_REGIONS = ['solar-wind', 'termination-shock', 'heliosheath', 'heliopause', 'interstellar-space'] as const;
+export type HeliosphereRegion = typeof HELIOSPHERE_REGIONS[number];
+export type Selection = { readonly kind: 'body'; readonly body: SelectableBody } | { readonly kind: 'region'; readonly region: HeliosphereRegion } | { readonly kind: 'none' };
+export interface HeliosphereLayers {
+  readonly outerHeliosphere: boolean;
+  readonly terminationShock: boolean;
+  readonly orbitPaths: boolean;
+  readonly labels: boolean;
+}
+export function defaultHeliosphereLayers(): HeliosphereLayers {
+  return { outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true };
+}
+export function selectedBody(state: Pick<ExperienceState, 'selection'>): SelectableBody | null {
+  return state.selection.kind === 'body' ? state.selection.body : null;
+}
+
 export interface ViewOptions {
   readonly orbitPaths: boolean;
   readonly labels: boolean;
@@ -29,9 +45,15 @@ export interface ScientificReturnContext {
 export type PresentationState =
   | { readonly kind: 'scientific' }
   | {
-      readonly kind: 'gravity' | 'heliosphere';
+      readonly kind: 'gravity';
       readonly sessionId: number;
       readonly returnContext: ScientificReturnContext;
+    }
+  | {
+      readonly kind: 'heliosphere';
+      readonly sessionId: number;
+      readonly returnContext: ScientificReturnContext;
+      readonly layers: HeliosphereLayers;
     };
 
 export type PresentationHandoff = {
@@ -54,7 +76,7 @@ export interface ExperienceState {
   readonly presentation: PresentationState;
   readonly nextPresentationSessionId: number;
   readonly frame: ViewMode;
-  readonly selectedBody: SelectableBody | null;
+  readonly selection: Selection;
   readonly followedPlanet: PlanetId | null;
   readonly cameraBookmark: CameraBookmark;
   readonly cameraRevision: number;
@@ -84,6 +106,8 @@ export interface GalacticOrbitPresentation {
 }
 
 export type ExperienceAction =
+  | { readonly type: 'select-region'; readonly region: HeliosphereRegion }
+  | { readonly type: 'set-heliosphere-layer'; readonly layer: keyof HeliosphereLayers; readonly enabled: boolean }
   | { readonly type: 'enter-heliosphere' }
   | { readonly type: 'leave-heliosphere' }
   | { readonly type: 'enter-gravity' }
@@ -191,7 +215,7 @@ export function createInitialExperienceState(today: Date): ExperienceState {
     presentation: { kind: 'scientific' },
     nextPresentationSessionId: 1,
     frame: 'sun',
-    selectedBody: null,
+    selection: { kind: 'none' },
     followedPlanet: null,
     cameraBookmark: 'hero',
     cameraRevision: 0,
@@ -222,6 +246,7 @@ function discardPresentation(state: ExperienceState): ExperienceState {
   return {
     ...state,
     presentation: { kind: 'scientific' },
+    selection: state.selection.kind === 'region' ? { kind: 'none' } : state.selection,
     isPlaying: false,
     followedPlanet: null,
     trailRevision: state.trailRevision + 1,
@@ -253,9 +278,9 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
       return {
         ...state,
         presentation: {
-          kind: action.type === 'enter-gravity' ? 'gravity' : 'heliosphere',
+          ...(action.type === 'enter-gravity' ? { kind: 'gravity' as const } : { kind: 'heliosphere' as const, layers: defaultHeliosphereLayers() }),
           sessionId: state.nextPresentationSessionId,
-          returnContext: { frame: state.frame, selectedBody: state.selectedBody, bookmark: state.cameraBookmark },
+          returnContext: { frame: state.frame, selectedBody: selectedBody(state), bookmark: state.cameraBookmark },
         },
         nextPresentationSessionId: state.nextPresentationSessionId + 1,
         isPlaying: false,
@@ -268,7 +293,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
       return {
         ...state,
         frame: state.presentation.returnContext.frame,
-        selectedBody: state.presentation.returnContext.selectedBody,
+        selection: state.presentation.returnContext.selectedBody ? { kind: 'body', body: state.presentation.returnContext.selectedBody } : { kind: 'none' },
         cameraBookmark: state.presentation.returnContext.bookmark,
         presentation: { kind: 'scientific' },
         isPlaying: false,
@@ -382,7 +407,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         : {
             ...state,
             frame: action.frame,
-            selectedBody: action.frame === 'galaxy' ? null : state.selectedBody,
+            selection: action.frame === 'galaxy' ? { kind: 'none' } : state.selection,
             followedPlanet: null,
             isPlaying: false,
             trailRevision: state.trailRevision + 1,
@@ -393,11 +418,17 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
       if (state.frame === 'galaxy' && action.body !== null) return state;
       return {
         ...state,
-        selectedBody: action.body,
-        followedPlanet: action.body === state.selectedBody ? state.followedPlanet : null,
+        selection: action.body ? { kind: 'body', body: action.body } : { kind: 'none' },
+        followedPlanet: action.body === selectedBody(state) ? state.followedPlanet : null,
       };
+    case 'select-region':
+      if (state.presentation.kind !== 'heliosphere') return state;
+      return { ...state, selection: { kind: 'region', region: action.region }, followedPlanet: null };
+    case 'set-heliosphere-layer':
+      if (state.presentation.kind !== 'heliosphere') return state;
+      return { ...state, presentation: { ...state.presentation, layers: { ...state.presentation.layers, [action.layer]: action.enabled } } };
     case 'toggle-planet-follow':
-      if (state.selectedBody !== action.planet || state.frame === 'galaxy') return state;
+      if (selectedBody(state) !== action.planet || state.frame === 'galaxy') return state;
       if (state.followedPlanet === action.planet) return { ...state, followedPlanet: null };
       if (state.presentation.kind === 'scientific' && state.frame === 'space' && state.cameraBookmark === 'full') {
         return {

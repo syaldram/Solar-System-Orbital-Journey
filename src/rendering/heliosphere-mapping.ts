@@ -4,6 +4,7 @@ import type { PlanetId, Vector3Au } from '../astronomy/solar-system';
 export const HELIOSPHERE_SUN_RADIUS = 4;
 export const TERMINATION_SHOCK_RADIUS = 112;
 export const HELIOPAUSE_RADIUS = 145;
+export const HELIOSPHERE_EXTENT = 168;
 const BODY_RADII: Readonly<Record<PlanetId, number>> = {
   mercury: 1, venus: 1.3, earth: 1.4, mars: 1.1,
   jupiter: 3, saturn: 2.5, uranus: 2, neptune: 2,

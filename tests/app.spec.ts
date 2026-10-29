@@ -1,4 +1,11 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
+
+async function captureHeliosphere(page: Page, info: TestInfo, name: string): Promise<void> {
+  await expect(page.locator('#hero')).toHaveCSS('opacity', '0');
+  const path = info.outputPath(`${name}-${info.project.name}.png`);
+  await page.screenshot({ path });
+  await info.attach(`${name} (${info.project.name})`, { path, contentType: 'image/png' });
+}
 
 type Box = NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>;
 
@@ -150,7 +157,7 @@ test('keeps the calculated planets accessible in the full journey overview', asy
   await expect(saturnMarker).toBeVisible();
 
   await page.getByRole('button', { name: 'View options' }).click();
-  await page.getByLabel('Labels').uncheck();
+  await page.locator('#options-panel').getByLabel('Labels').uncheck();
   await expect(sunMarker).toHaveAttribute('data-label-mode', 'persistent');
   await expect(saturnMarker).toHaveAttribute('data-label-mode', 'hidden');
   await page.getByRole('button', { name: 'Close options' }).click();
@@ -817,8 +824,8 @@ test('Sun’s Gravity supports phone layout, quality tiers, explanation and shar
     await page.getByLabel('Visual quality').selectOption(quality);
     await expect(page.getByLabel('Visual quality')).toHaveValue(quality);
   }
-  await page.getByLabel('Labels', { exact: true }).uncheck();
-  await page.getByLabel('Orbit paths', { exact: true }).uncheck();
+  await page.locator('#options-panel').getByLabel('Labels', { exact: true }).uncheck();
+  await page.locator('#options-panel').getByLabel('Orbit paths', { exact: true }).uncheck();
   await page.getByRole('button', { name: 'Close options', exact: true }).click();
   await expect(page.locator('#gravity-disclosure')).toBeInViewport();
   await page.getByLabel('Speed', { exact: true }).selectOption('decade');
@@ -1064,7 +1071,7 @@ for (const frame of ['sun', 'space'] as const) {
   });
 }
 
-test('Heliosphere camera buttons, Focus, Follow, Escape and Reset remain explicit', async ({ page }) => {
+test('Heliosphere camera buttons, Focus, Follow, Escape and Reset remain explicit', async ({ page, browserName }) => {
   await page.goto('./?view=sun&body=earth&camera=inner');
   await page.locator('#enter-heliosphere').click();
   const earth = page.locator('[data-body="earth"]');
@@ -1072,6 +1079,12 @@ test('Heliosphere camera buttons, Focus, Follow, Escape and Reset remain explici
   for (const name of ['Orbit left', 'Pan up', 'Zoom in']) {
     const button = page.getByRole('button', { name, exact: true });
     await button.focus();
+    // Safari's native full-control navigation uses Option-Tab unless its Tab preference is enabled.
+    // https://support.apple.com/guide/safari/cpsh003/mac
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Shift+Tab' : 'Shift+Tab');
+    await expect(button).toBeFocused();
+    expect(await button.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
     await page.keyboard.press('Enter');
   }
   const navigated = await settledBoundingBox(earth);
@@ -1186,14 +1199,17 @@ test('Heliosphere mouse orbit, secondary pan and wheel zoom move mapped markers'
 test('Heliosphere real touch orbit, pinch and two-finger pan move mapped markers', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'CDP supplies native multi-touch in Chromium; other engines retain mouse/button coverage.');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('./?view=sun');
+  await page.goto('./?view=sun&body=earth');
   await page.locator('#enter-heliosphere').click();
+  await page.locator('#follow-planet').click();
   const session = await page.context().newCDPSession(page);
   await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
-  const marker = page.locator('[data-body="neptune"]');
+  const marker = page.locator('[data-body="earth"]');
   const touch = async (type: 'touchStart' | 'touchMove' | 'touchEnd', points: { x: number; y: number; id: number }[]) => session.send('Input.dispatchTouchEvent', { type, touchPoints: points });
   let before = await settledBoundingBox(marker);
-  for (const gesture of ['orbit', 'pinch', 'pan']) {
+  // Pan first so the followed Earth is offset from the orbit/zoom target;
+  // its visible position then observes all three gestures without using an offscreen planet.
+  for (const gesture of ['pan', 'orbit', 'pinch']) {
     const start = gesture === 'orbit' ? [{ x: 160, y: 300, id: 0 }] : [{ x: 120, y: 300, id: 0 }, { x: 230, y: 300, id: 1 }];
     for (const point of start) {
       expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, point)).toBe('CANVAS');
@@ -1203,6 +1219,8 @@ test('Heliosphere real touch orbit, pinch and two-finger pan move mapped markers
       await touch('touchMove', start.map((point, index) => ({ ...point, x: point.x + (gesture === 'pinch' ? (index === 0 ? -1 : 1) : 1) * step * 7, y: point.y + (gesture === 'pan' ? step * 5 : 0) })));
     }
     await touch('touchEnd', []);
+    await expect(page.locator('#planet-name')).toHaveText('Earth');
+    await expect(page.locator('#follow-planet')).toHaveText('Stop Following Earth');
     const after = await settledBoundingBox(marker);
     expect(Math.hypot(after.x - before.x, after.y - before.y), gesture).toBeGreaterThan(1);
     before = after;
@@ -1210,15 +1228,15 @@ test('Heliosphere real touch orbit, pinch and two-finger pan move mapped markers
   await session.detach();
 });
 
-for (const [name, width, height] of [['desktop', 1280, 720], ['square', 900, 900], ['phone', 390, 844]] as const) test(`Heliosphere inspection artifact ${name}`, async ({ page, browserName }) => {
+for (const [name, width, height] of [['desktop', 1280, 720], ['square', 900, 900], ['phone', 390, 844]] as const) test(`Heliosphere inspection artifact ${name}`, async ({ page, browserName }, testInfo) => {
   test.skip(browserName !== 'chromium', 'One artifact per layout suffices for visual inspection.');
   await page.setViewportSize({ width, height });
   await page.goto('./?view=sun&body=earth');
   await page.locator('#enter-heliosphere').click();
   await settledBoundingBox(page.locator('[data-body="earth"]'));
-  await page.screenshot({ path: `/private/tmp/heliosphere-${name}.png` });
+  await captureHeliosphere(page, testInfo, name);
   await page.getByRole('button', { name: 'Close planet information', exact: true }).click();
-  await page.screenshot({ path: `/private/tmp/heliosphere-${name}-overview.png` });
+  await captureHeliosphere(page, testInfo, `${name}-overview`);
 });
 
 test('Heliosphere exposes effective checkbox values and accurate freeze/share descriptions', async ({ page }) => {
@@ -1236,4 +1254,220 @@ test('Heliosphere exposes effective checkbox values and accurate freeze/share de
   await expect(page.locator('[data-view-option="labels"]')).not.toBeChecked();
   await expect(page.locator('[data-view-option="orbitPaths"]')).not.toBeChecked();
   await expect(page.locator('#gravity-share-reason')).toBeHidden();
+});
+
+const regionCases = [
+  ['solar-wind', 'Solar wind', 'A flow of charged particles from the Sun surrounds all eight planets.', 568.71, 372.70],
+  ['termination-shock', 'Termination shock', 'The boundary where the solar wind slows abruptly.', 476.71, 380.82],
+  ['heliosheath', 'Heliosheath', 'The region of slowed solar wind between the termination shock and heliopause.', 439.94, 384.07],
+  ['heliopause', 'Heliopause', 'The boundary where the solar-wind environment meets interstellar plasma.', 400.32, 387.56],
+  ['interstellar-space', 'Interstellar space', "Space beyond the heliopause; the Solar System's distant objects extend farther.", 367.26, 390.48],
+] as const;
+
+test('Heliosphere physically picks five visible surfaces and exposes identical semantic selections', async ({ page, browserName }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('./?date=2042-03-14T12%3A30%3A00Z&view=sun&body=earth&camera=inner');
+  await page.locator('#enter-heliosphere').click();
+  await settledBoundingBox(page.locator('[data-body="earth"]'));
+  await page.locator('[data-heliosphere-layer="labels"]').uncheck();
+  // Coordinates come from projection of actual renderer-delivered cut-surface
+  // geometry in orbital-scene.test.ts, with the same deterministic overview.
+  for (const [, name, explanation, x, y] of regionCases) {
+    await page.mouse.click(x, y);
+    await expect(page.locator('#planet-name')).toHaveText(name);
+    await expect(page.locator('#planet-identity')).toHaveText(explanation);
+    await expect(page.locator('#planet-card')).toHaveCount(1);
+  }
+  await page.getByRole('button', { name: 'Play simulation', exact: true }).click();
+  const before = await page.locator('[data-body="sun"]').evaluate((el) => ({ x: el.style.left, y: el.style.top }));
+  for (const [region, name, explanation] of regionCases) {
+    const button = page.locator(`[data-region="${region}"]`);
+    await button.focus();
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Shift+Tab' : 'Shift+Tab');
+    await expect(button).toBeFocused();
+    expect(await button.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#planet-name')).toHaveText(name);
+    await expect(page.locator('#planet-identity')).toHaveText(explanation);
+    await expect(page.getByRole('button', { name: 'Pause simulation', exact: true })).toBeVisible();
+  }
+  expect(await page.locator('[data-body="sun"]').evaluate((el) => ({ x: el.style.left, y: el.style.top }))).toEqual(before);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#planet-card')).toBeHidden();
+});
+
+test('Heliosphere hidden surfaces stay unpickable, buttons preserve layers, and fresh sessions reset independently', async ({ page }) => {
+  await page.goto('./?view=sun&body=earth');
+  await page.locator('#enter-heliosphere').click();
+  await settledBoundingBox(page.locator('[data-body="earth"]'));
+  await page.locator('[data-heliosphere-layer="labels"]').uncheck();
+  await page.locator('[data-region="heliopause"]').click();
+  await page.locator('[data-heliosphere-layer="outerHeliosphere"]').uncheck();
+  await expect(page.locator('#planet-name')).toHaveText('Heliopause');
+  await expect(page.locator('#planet-card')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.mouse.click(400.32, 387.56);
+  // The visible shock shell underneath may legitimately win; the hidden
+  // heliopause cannot be returned by the common resolver.
+  await expect.poll(async () => await page.locator('#planet-card').isVisible()
+    ? await page.locator('#planet-name').textContent() : null).not.toBe('Heliopause');
+  await page.locator('[data-region="heliopause"]').click();
+  await expect(page.locator('#planet-name')).toHaveText('Heliopause');
+  await expect(page.locator('[data-heliosphere-layer="outerHeliosphere"]')).not.toBeChecked();
+  await expect(page.locator('[data-heliosphere-layer="terminationShock"]')).toBeChecked();
+  await expect(page.locator('[data-heliosphere-layer="orbitPaths"]')).toBeChecked();
+  await page.locator('[data-heliosphere-layer="terminationShock"]').uncheck();
+  await page.keyboard.press('Escape');
+  await page.mouse.click(476.71, 380.82);
+  await expect(page.locator('#planet-card')).toBeHidden();
+  await page.locator('[data-region="termination-shock"]').focus();
+  await page.keyboard.press('Space');
+  await expect(page.locator('#planet-name')).toHaveText('Termination shock');
+  await page.locator('#leave-heliosphere').click();
+  await expect(page.locator('#planet-name')).toHaveText('Earth');
+  await page.locator('#enter-heliosphere').click();
+  for (const layer of ['outerHeliosphere', 'terminationShock', 'orbitPaths', 'labels']) {
+    await expect(page.locator(`[data-heliosphere-layer="${layer}"]`)).toBeChecked();
+  }
+});
+
+test('Heliosphere phone sheet collapses and scrolls while Pause and camera navigation remain reachable', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('./?view=sun');
+  await page.locator('#enter-heliosphere').click();
+  const summary = page.locator('#heliosphere-sheet > summary');
+  await summary.click();
+  await expect(page.locator('#heliosphere-sheet')).not.toHaveAttribute('open');
+  await expect(page.locator('[data-region="solar-wind"]')).toBeHidden();
+  await captureHeliosphere(page, testInfo, 'phone-collapsed');
+  await page.getByRole('button', { name: 'Play simulation', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause simulation', exact: true })).toBeInViewport();
+  await page.getByRole('button', { name: 'Orbit left', exact: true }).click();
+  await summary.click();
+  for (const [region, name] of regionCases) {
+    await page.locator(`[data-region="${region}"]`).click();
+    await expect(page.locator('#planet-name')).toHaveText(name);
+  }
+  await page.locator('[data-heliosphere-layer="labels"]').uncheck();
+  await expect(page.locator('[data-region="solar-wind"]')).toBeEnabled();
+  await captureHeliosphere(page, testInfo, 'phone-sheet-open');
+});
+
+test('Heliosphere region replacement ends Follow without pausing or moving the camera', async ({ page }) => {
+  await page.goto('./?view=sun&body=earth');
+  await page.locator('#enter-heliosphere').click();
+  await page.locator('#follow-planet').click();
+  await expect(page.locator('#follow-planet')).toHaveText('Stop Following Earth');
+  const before = await settledBoundingBox(page.locator('[data-body="earth"]'));
+  await page.locator('[data-region="solar-wind"]').click();
+  await expect(page.locator('#planet-name')).toHaveText('Solar wind');
+  const after = await settledBoundingBox(page.locator('[data-body="earth"]'));
+  expect(Math.hypot(before.x - after.x, before.y - after.y)).toBeLessThan(.5);
+  await page.getByRole('button', { name: 'Select Earth', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#follow-planet')).toHaveText('Follow Planet');
+});
+
+test('Heliosphere reactivation restores its card and close focus while labels-off planets remain keyboard accessible', async ({ page }) => {
+  await page.goto('./?view=sun&body=earth');
+  await page.locator('#enter-heliosphere').click();
+  await settledBoundingBox(page.locator('[data-body="earth"]'));
+  await page.locator('[data-heliosphere-layer="labels"]').uncheck();
+  for (const planet of ['Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']) {
+    const button = page.getByRole('button', { name: `Select ${planet}`, exact: true });
+    await button.focus(); await page.keyboard.press('Enter');
+    await expect(page.locator('#planet-name')).toHaveText(planet);
+  }
+  await expect(page.locator('#heliosphere-regions button')).toHaveCount(5);
+  await page.mouse.click(568.71, 372.70);
+  await expect(page.locator('#planet-name')).toHaveText('Solar wind');
+  await page.locator('#heliosphere-sheet > summary').click();
+  await page.mouse.click(568.71, 372.70);
+  await expect(page.locator('#heliosphere-sheet')).toHaveAttribute('open');
+  await expect(page.locator('#planet-name')).toBeInViewport();
+  await page.locator('#close-planet').click();
+  await expect(page.locator('[data-region="solar-wind"]')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await page.locator('#close-planet').focus(); await page.keyboard.press('Escape');
+  await expect(page.locator('[data-region="solar-wind"]')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await page.locator('[data-heliosphere-layer="labels"]').focus(); await page.keyboard.press('Escape');
+  await expect(page.locator('[data-heliosphere-layer="labels"]')).toBeFocused();
+});
+
+test('Heliosphere effective layers preserve storage allowlists and restore usable scientific panels', async ({ page }) => {
+  await page.goto('./?view=sun&body=earth');
+  await page.locator('#enter-heliosphere').click();
+  await page.locator('[data-region="heliopause"]').click();
+  for (const layer of ['labels', 'orbitPaths', 'outerHeliosphere']) await page.locator(`[data-heliosphere-layer="${layer}"]`).uncheck();
+  await page.locator('#options-button').click();
+  await expect(page.locator('[data-view-option="labels"]')).not.toBeChecked();
+  await expect(page.locator('[data-view-option="orbitPaths"]')).not.toBeChecked();
+  await page.locator('#quality-select').selectOption('balanced');
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('orbital-journey:preferences:v1') ?? '{}'));
+  expect(Object.keys(stored).sort()).toEqual(['labels', 'quality', 'reducedMotion', 'trails']);
+  expect(stored.labels).toBe(true);
+  expect(page.url()).not.toMatch(/heliopause|heliosphere|outerHeliosphere|layers/);
+  await page.locator('#leave-heliosphere').click();
+  await expect(page.locator('#planet-name')).toHaveText('Earth');
+  await page.locator('[data-view-option="labels"]').uncheck();
+  await page.getByRole('button', { name: 'Close options', exact: true }).click();
+  await page.locator('#explain-button').click();
+  await page.locator('#sources-open').click(); await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Close explanation', exact: true }).click();
+  await page.locator('#share-button').click();
+  const params = new URL(page.url()).searchParams;
+  expect([...params.keys()].sort()).toEqual(['body', 'camera', 'date', 'view']);
+  expect(params.get('body')).toBe('earth');
+});
+
+test('Heliosphere navigation releases retain card and Follow and labels-on overlap selects a planet at another pose', async ({ page }) => {
+  await page.goto('./?view=sun&body=earth');
+  await page.locator('#enter-heliosphere').click();
+  await page.locator('#follow-planet').click();
+  await settledBoundingBox(page.locator('[data-body="earth"]'));
+  for (const button of ['left', 'right'] as const) {
+    await page.mouse.move(600, 450); await page.mouse.down({ button });
+    await page.mouse.move(650, 480, { steps: 8 }); await page.mouse.up({ button });
+    await expect(page.locator('#planet-name')).toHaveText('Earth');
+    await expect(page.locator('#follow-planet')).toHaveText('Stop Following Earth');
+  }
+  await page.mouse.click(500, 450, { button: 'right' });
+  await expect(page.locator('#follow-planet')).toHaveText('Stop Following Earth');
+  await page.locator('#heliosphere-reset-camera').click();
+  await page.getByRole('button', { name: 'Orbit left', exact: true }).click();
+  const earth = await settledBoundingBox(page.locator('[data-body="earth"]'));
+  await page.mouse.click(earth.x + earth.width / 2, earth.y + earth.height / 2);
+  await expect(page.locator('#planet-name')).toHaveText('Earth');
+  await expect(page.locator('#planet-card')).toHaveCount(1);
+});
+
+test('Heliosphere short phone sheet preserves camera and Pause pointer access', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto('./?view=sun');
+  await page.locator('#enter-heliosphere').click();
+  await page.locator('[data-region="heliopause"]').click();
+  await page.getByRole('button', { name: 'Orbit left', exact: true }).click();
+  await page.getByRole('button', { name: 'Play simulation', exact: true }).click();
+  await page.getByRole('button', { name: 'Pause simulation', exact: true }).click();
+  await captureHeliosphere(page, testInfo, 'short-phone-open');
+});
+
+test.describe('Heliosphere native touch controls', () => {
+  test.use({ hasTouch: true });
+  test.skip(({ browserName }) => browserName === 'firefox', 'Native touch emulation is supported in Chromium/WebKit; physical hardware remains unverified.');
+  test('activates region, layer and sheet controls with touch', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('./?view=sun');
+    await page.locator('#enter-heliosphere').tap();
+    await page.locator('[data-region="heliopause"]').tap();
+    await expect(page.locator('#planet-name')).toHaveText('Heliopause');
+    await page.locator('[data-heliosphere-layer="labels"]').tap();
+    await expect(page.locator('[data-heliosphere-layer="labels"]')).not.toBeChecked();
+    await page.locator('#heliosphere-sheet > summary').tap();
+    await expect(page.locator('#heliosphere-sheet')).not.toHaveAttribute('open');
+    await page.locator('#heliosphere-sheet > summary').tap();
+    await expect(page.locator('#heliosphere-sheet')).toHaveAttribute('open');
+  });
 });

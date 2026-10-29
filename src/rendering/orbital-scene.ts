@@ -1,3 +1,4 @@
+import { defaultHeliosphereLayers, type HeliosphereLayers, type Selection } from '../experience/experience-state';
 import * as THREE from 'three';
 
 import { PLANET_IDS, getPlanetProfile } from '../astronomy/planet-data';
@@ -43,6 +44,7 @@ import { SolarPresentation } from './solar-presentation';
 export interface SceneState {
   readonly gravity: boolean;
   readonly heliosphere: boolean;
+  readonly heliosphereLayers?: HeliosphereLayers;
   readonly snapshot: SystemSnapshot;
   readonly frame: ViewMode;
   readonly bookmark: CameraBookmark;
@@ -64,7 +66,7 @@ export interface OrbitalSceneOptions {
   readonly canvas: HTMLCanvasElement;
   readonly labelLayer: HTMLElement;
   readonly assetBase: string;
-  readonly onSelect: (body: SelectableBody) => void;
+  readonly onSelect: (selection: Exclude<Selection, { kind: 'none' }>) => void;
   readonly onQualityAdapted: (quality: Exclude<QualityPreference, 'auto'>) => void;
 }
 
@@ -110,7 +112,7 @@ export class OrbitalScene {
   private readonly starField: THREE.Points;
   private readonly earthClouds: THREE.Mesh | null;
   private readonly ringMaterials: readonly RingPresentationMaterial[];
-  private readonly onSelect: (body: SelectableBody) => void;
+  private readonly onSelect: (selection: Exclude<Selection, { kind: 'none' }>) => void;
   private readonly onQualityAdapted: (quality: Exclude<QualityPreference, 'auto'>) => void;
   private readonly qualityMonitor = new AdaptiveQualityMonitor();
   private readonly assetBase: string;
@@ -177,10 +179,13 @@ export class OrbitalScene {
       galaxyRoot: this.galaxyPresentation.root,
       galaxySun: this.galaxyPresentation.sunMarker,
       planets: this.planetMeshes,
-    }, options.onSelect);
-    options.canvas.addEventListener('pointermove', (event) => this.handlePointerMove(event));
+    }, (body) => this.onSelect({ kind: 'body', body }));
+    const gesture = new SceneClickGesture();
+    options.canvas.addEventListener('pointerdown', (event) => gesture.down(event));
+    options.canvas.addEventListener('pointermove', (event) => { gesture.move(event); this.handlePointerMove(event); });
+    options.canvas.addEventListener('pointercancel', (event) => gesture.cancel(event.pointerId));
     options.canvas.addEventListener('pointerleave', () => this.sceneLabels.clearHover());
-    options.canvas.addEventListener('pointerup', (event) => this.handlePointer(event));
+    options.canvas.addEventListener('pointerup', (event) => { if (gesture.up(event)) this.handlePointer(event); });
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.loadTextures();
@@ -502,6 +507,7 @@ export class OrbitalScene {
     const isGalaxy = state.frame === 'galaxy';
     const isFullJourney = !(state.gravity || state.heliosphere) && state.frame === 'space' && state.bookmark === 'full';
     this.heliospherePresentation.root.visible = state.heliosphere;
+    this.heliospherePresentation.setLayers(state.heliosphereLayers ?? defaultHeliosphereLayers());
     this.gravityPresentation.root.visible = state.gravity;
     this.starField.visible = !(state.gravity || state.heliosphere);
     const centers = state.gravity ? gravityCenters(state.snapshot) : [];
@@ -647,19 +653,12 @@ export class OrbitalScene {
     if (!this.currentState) return;
     const bounds = this.renderer.domElement.getBoundingClientRect();
     const markerHit = this.sceneLabels.hitTest(event.clientX, event.clientY, bounds);
-    if (markerHit) {
-      this.onSelect(markerHit);
-      return;
-    }
-    if (this.currentState.frame === 'galaxy') return;
     this.pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     this.pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const targets: THREE.Object3D[] = [this.solarPresentation.mesh, ...this.planetMeshes.values()];
-    const hit = this.raycaster.intersectObjects(targets, false)[0];
-    if (!hit) return;
-    const id = hit.object.userData.planetId as PlanetId | undefined;
-    this.onSelect(id ?? 'sun');
+    const targets: THREE.Object3D[] = this.currentState.frame === 'galaxy' ? [] : [this.solarPresentation.mesh, ...this.planetMeshes.values()];
+    const selection = resolveSceneSelection(this.raycaster, targets, this.heliospherePresentation.drawables, markerHit);
+    if (selection) this.onSelect(selection);
   }
 
   private applyQuality(preference: QualityPreference, frame: ViewMode): void {
@@ -679,4 +678,48 @@ export class OrbitalScene {
     }
   }
 
+}
+
+/** One activation resolves markers first (in handlePointer), then bodies, then
+ * nearest region surface. Eligibility follows the drawable's actual ancestry. */
+export function isDisplayed(object: THREE.Object3D): boolean {
+  for (let current: THREE.Object3D | null = object; current; current = current.parent) {
+    if (!current.visible) return false;
+  }
+  return true;
+}
+export function resolveSceneSelection(
+  raycaster: THREE.Raycaster,
+  bodies: readonly THREE.Object3D[],
+  regions: HeliospherePresentation['drawables'],
+  marker: SelectableBody | null = null,
+): Exclude<Selection, { kind: 'none' }> | null {
+  if (marker) return { kind: 'body', body: marker };
+  const body = raycaster.intersectObjects(bodies.filter(isDisplayed), false)[0];
+  if (body) return { kind: 'body', body: body.object.userData.planetId as PlanetId | undefined ?? 'sun' };
+  const eligible = regions.filter(({ object }) => isDisplayed(object));
+  const hit = raycaster.intersectObjects(eligible.map(({ object }) => object), false)[0];
+  const region = eligible.find(({ object }) => object === hit?.object)?.region;
+  return region ? { kind: 'region', region } : null;
+}
+
+/** A completed primary click/tap, never the release of a camera gesture. */
+class SceneClickGesture {
+  private readonly pointers = new Map<number, { x: number; y: number; eligible: boolean }>();
+  down(event: Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY' | 'button' | 'isPrimary'>): void {
+    const multiple = this.pointers.size > 0;
+    if (multiple) this.pointers.forEach((pointer) => { pointer.eligible = false; });
+    this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, eligible: !multiple && event.isPrimary && event.button === 0 });
+  }
+  move(event: Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY'>): void {
+    const pointer = this.pointers.get(event.pointerId);
+    if (pointer && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) pointer.eligible = false;
+  }
+  cancel(pointerId: number): void { this.pointers.delete(pointerId); }
+  up(event: Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY' | 'button'>): boolean {
+    this.move(event);
+    const pointer = this.pointers.get(event.pointerId);
+    this.pointers.delete(event.pointerId);
+    return Boolean(pointer?.eligible && event.button === 0);
+  }
 }

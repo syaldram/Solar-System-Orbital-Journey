@@ -243,7 +243,7 @@ button:disabled { cursor: default; opacity: .5; }
 
 .heliosphere-camera-controls { position: fixed; right: 1rem; top: 9rem; display: grid; grid-template-columns: repeat(2, 1fr); gap: .3rem; padding: .4rem; border-radius: .6rem; background: var(--panel); pointer-events: auto; }
 .heliosphere-camera-controls button { min-height: 36px; padding: .4rem; font-size: .7rem; }
-.app[data-heliosphere="true"] .side-panel { max-height: calc(100dvh - 16rem); overflow: auto; }
+.side-panel { max-height: calc(100dvh - 16rem); overflow: auto; }
 @media (max-width: 700px) {
   .app[data-heliosphere="true"] .topbar { display: flex; flex-wrap: wrap; gap: .3rem; }
   .app[data-heliosphere="true"] .topbar__actions { flex-wrap: wrap; }
@@ -258,4 +258,27 @@ button:disabled { cursor: default; opacity: .5; }
   .app[data-heliosphere="true"] .heliosphere-camera-controls { left: .7rem; right: .7rem; top: 12.5rem; bottom: auto; display: flex; flex-wrap: nowrap; overflow-x: auto; max-height: none; gap: .4rem; }
   .heliosphere-camera-controls button { flex: 0 0 auto; min-height: 44px; }
   .app[data-heliosphere="true"] .planet-card { max-height: calc(100dvh - 26rem); }
+}
+
+.heliosphere-sheet { position: absolute; right: 1.25rem; top: 6rem; bottom: 8rem; width: min(22rem, calc(100vw - 2rem)); height: fit-content; max-height: calc(100dvh - 15rem); overflow: auto; padding: .8rem; border: 1px solid var(--line); border-radius: .85rem; background: var(--panel); pointer-events: auto; }
+.heliosphere-sheet > summary { cursor: pointer; padding: .6rem; min-height: 44px; }
+#heliosphere-regions { display: flex; flex-wrap: wrap; gap: .35rem; margin: .6rem 0; }
+#heliosphere-regions button { min-height: 44px; padding: .5rem; }
+#heliosphere-layers { display: grid; gap: .35rem; border: 1px solid var(--line); }
+#heliosphere-layers label { display: flex; align-items: center; gap: .5rem; min-height: 44px; }
+#heliosphere-layers input { width: 1.2rem; height: 1.2rem; }
+.heliosphere-sheet .planet-card { position: relative; inset: auto; width: 100%; max-height: none; margin-top: .5rem; box-shadow: none; }
+@media (max-width: 700px) {
+  .heliosphere-sheet { left: .7rem; right: .7rem; top: auto; bottom: 9.6rem; width: auto; max-height: 42dvh; }
+  .app[data-heliosphere="true"] .heliosphere-sheet .planet-card { position: relative; inset: auto; width: 100%; max-height: none; overflow: visible; }
+}
+
+#heliosphere-regions button, .heliosphere-camera-controls button { border: 1px solid var(--line); border-radius: .45rem; background: rgba(22,43,64,.7); color: var(--muted); }
+#heliosphere-regions button[aria-pressed="true"] { color: var(--solar); border-color: var(--solar); }
+
+.heliosphere-sheet { backdrop-filter: blur(22px); }
+.heliosphere-sheet > summary { position: sticky; top: -.8rem; z-index: 1; background: #09111e; border-radius: .4rem; }
+
+@media (max-width: 700px) {
+  .heliosphere-sheet { max-height: min(42dvh, calc(100dvh - 26rem)); }
 }

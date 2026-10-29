@@ -10,6 +10,7 @@ import {
 } from './astronomy/solar-system';
 import {
   createInitialExperienceState,
+  selectedBody,
   getAlongPathMotion,
   getGalacticOrbitPresentation,
   updateExperience,
@@ -143,7 +144,7 @@ try {
     canvas: document.getElementById('space-canvas') as HTMLCanvasElement,
     labelLayer: document.getElementById('label-layer') as HTMLElement,
     assetBase: import.meta.env.BASE_URL,
-    onSelect: (body) => dispatch({ type: 'select', body }),
+    onSelect: (selection) => selection.kind === 'region' ? dispatch({ type: 'select-region', region: selection.region }) : dispatch({ type: 'select', body: selection.body }),
     onQualityAdapted: (quality) => {
       dispatch({ type: 'set-quality', quality });
       appInterface.showToast(`Visual quality adjusted to ${quality} to keep motion smooth.`);
@@ -196,14 +197,15 @@ function dispatch(action: ExperienceAction): void {
 
 function renderInterface(): void {
   appInterface.render(state, getAlongPathMotion(state));
-  if (state.selectedBody && state.selectedBody !== 'sun') {
+  const body = selectedBody(state);
+  if (body && body !== 'sun') {
     const instant = new Date(state.currentTimeMs);
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
       state.presentation.kind !== 'scientific' || state.frame === 'sun' ? 'sun' : 'space',
     );
-    const planet = snapshot.planets.find(({ id }) => id === state.selectedBody);
+    const planet = snapshot.planets.find(({ id }) => id === body);
     if (planet) {
       const distanceAu = Math.hypot(
         planet.position.x - snapshot.sun.x,
@@ -211,9 +213,9 @@ function renderInterface(): void {
         planet.position.z - snapshot.sun.z,
       );
       appInterface.renderPlanet({
-        profile: getPlanetProfile(state.selectedBody),
+        profile: getPlanetProfile(body),
         distanceAu,
-        speedKmPerSecond: calculateOrbitalSpeedKmPerSecond(state.selectedBody, instant),
+        speedKmPerSecond: calculateOrbitalSpeedKmPerSecond(body, instant),
       });
     }
   } else {
@@ -230,7 +232,7 @@ async function shareCurrentView(): Promise<void> {
     presentation: state.presentation,
     timeMs: state.currentTimeMs,
     frame: state.frame,
-    selectedBody: state.selectedBody,
+    selectedBody: selectedBody(state),
     cameraBookmark: state.cameraBookmark,
   });
   const url = new URL(window.location.href);
@@ -278,9 +280,10 @@ function animate(now: number): void {
         frame: state.frame,
         bookmark: state.cameraBookmark,
         cameraRevision: state.cameraRevision,
-        selectedBody: state.selectedBody,
+        selectedBody: selectedBody(state),
         followedPlanet: state.followedPlanet,
-        viewOptions: state.presentation.kind === 'heliosphere' ? { orbitPaths: true, labels: true, trails: false, planeOverlays: false } : state.viewOptions,
+        heliosphereLayers: state.presentation.kind === 'heliosphere' ? state.presentation.layers : undefined,
+        viewOptions: state.presentation.kind === 'heliosphere' ? { orbitPaths: state.presentation.layers.orbitPaths, labels: state.presentation.layers.labels, trails: false, planeOverlays: false } : state.viewOptions,
         quality: state.quality,
         reducedMotion: state.reducedMotion,
         rotations: rotationsAt(instant),

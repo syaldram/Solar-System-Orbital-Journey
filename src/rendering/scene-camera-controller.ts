@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import type { PlanetId } from '../astronomy/solar-system';
 import type { CameraBookmark, PresentationHandoff, SelectableBody, ViewMode } from '../experience/experience-state';
-import { HELIOPAUSE_RADIUS } from './heliosphere-mapping';
+import { HELIOSPHERE_EXTENT } from './heliosphere-mapping';
 import { SUN_DISPLAY_RADIUS, planetDisplayRadius } from './display-scale';
 
 const CAMERA_TWEEN_DURATION_MS = 800;
@@ -237,9 +237,9 @@ export class SceneCameraController {
     const tanVertical = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * 0.94;
     const tanHorizontal = tanVertical * this.camera.aspect;
     let distance = position.distanceTo(target);
-    for (const x of [-HELIOPAUSE_RADIUS * 2.5, HELIOPAUSE_RADIUS]) {
-      for (const y of [-HELIOPAUSE_RADIUS * 0.85, 0]) {
-        for (const z of [-HELIOPAUSE_RADIUS, HELIOPAUSE_RADIUS]) {
+    for (const x of [-HELIOSPHERE_EXTENT * 2.5, HELIOSPHERE_EXTENT]) {
+      for (const y of [-HELIOSPHERE_EXTENT * 0.85, 0]) {
+        for (const z of [-HELIOSPHERE_EXTENT, HELIOSPHERE_EXTENT]) {
           const point = new THREE.Vector3(x, y, z).sub(target);
           distance = Math.max(distance, point.dot(direction) + Math.max(Math.abs(point.dot(right)) / tanHorizontal, Math.abs(point.dot(up)) / tanVertical));
         }
