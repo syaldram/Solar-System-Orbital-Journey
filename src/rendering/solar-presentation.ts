@@ -11,6 +11,7 @@ import type { RenderingQualityProfile } from './quality-profile';
 export interface SolarPresentationState {
   readonly nowMs: number;
   readonly frozen?: boolean;
+  readonly phaseSeconds?: number;
   readonly reducedMotion: boolean;
   readonly visible: boolean;
   readonly quality: RenderingQualityProfile;
@@ -24,6 +25,7 @@ export class SolarPresentation {
   private readonly glow: THREE.Sprite;
   private readonly coronaLayers: readonly THREE.Sprite[];
   private animationTime = 0;
+  private explicitPhaseOffset: number | null = null;
   private lastAnimationAt = performance.now();
 
   constructor(parent: THREE.Group) {
@@ -74,19 +76,30 @@ export class SolarPresentation {
   render(state: SolarPresentationState): void {
     const elapsedSeconds = Math.min(0.05, Math.max(0, (state.nowMs - this.lastAnimationAt) / 1_000));
     this.lastAnimationAt = state.nowMs;
-    if (!state.reducedMotion && !state.frozen) this.animationTime += elapsedSeconds * 0.22;
+    let time: number;
+    if (state.phaseSeconds !== undefined) {
+      this.explicitPhaseOffset ??= this.animationTime - state.phaseSeconds * 0.22;
+      time = this.explicitPhaseOffset + state.phaseSeconds * 0.22;
+      this.animationTime = time;
+    } else {
+      if (this.explicitPhaseOffset !== null) {
+        this.explicitPhaseOffset = null;
+      }
+      if (!state.reducedMotion && !state.frozen) this.animationTime += elapsedSeconds * 0.22;
+      time = this.animationTime;
+    }
 
     this.mesh.visible = state.visible;
     this.glow.visible = state.visible;
     const timeUniform = this.material.uniforms.time;
-    if (timeUniform) timeUniform.value = this.animationTime;
+    if (timeUniform) timeUniform.value = time;
 
     const glowScale = SUN_DISPLAY_RADIUS * 6.2;
-    const glowBreath = state.reducedMotion ? 1 : 1 + Math.sin(this.animationTime * 0.7) * 0.025;
+    const glowBreath = state.reducedMotion ? 1 : 1 + Math.sin(time * 0.7) * 0.025;
     this.glow.scale.set(glowScale * glowBreath, glowScale * glowBreath, 1);
     if (this.glow.material instanceof THREE.SpriteMaterial) {
       this.glow.material.opacity = 0.72 * (
-        state.reducedMotion ? 1 : 1 + Math.sin(this.animationTime * 0.63) * 0.055
+        state.reducedMotion ? 1 : 1 + Math.sin(time * 0.63) * 0.055
       );
     }
 
@@ -97,12 +110,12 @@ export class SolarPresentation {
         ? corona.material.userData.baseRotation
         : 0;
       const driftRate = typeof corona.userData.driftRate === 'number' ? corona.userData.driftRate : 0;
-      corona.material.rotation = baseRotation + this.animationTime * driftRate;
+      corona.material.rotation = baseRotation + time * driftRate;
       const baseScale = typeof corona.userData.baseScale === 'number' ? corona.userData.baseScale : 1;
       const breathPhase = typeof corona.userData.breathPhase === 'number' ? corona.userData.breathPhase : 0;
       const breath = state.reducedMotion
         ? 1
-        : 1 + Math.sin(this.animationTime * 0.31 + breathPhase) * 0.018;
+        : 1 + Math.sin(time * 0.31 + breathPhase) * 0.018;
       corona.scale.set(baseScale * breath, baseScale * breath, 1);
     }
   }

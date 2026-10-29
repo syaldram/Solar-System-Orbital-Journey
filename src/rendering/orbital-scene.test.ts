@@ -4,7 +4,7 @@ import { OrbitalScene, resolveSceneSelection, type SceneState } from './orbital-
 import { PLANET_IDS } from '../astronomy/planet-data';
 import { calculateSystemSnapshot } from '../astronomy/reference-frames';
 import { calculateOrbitPath } from '../astronomy/solar-system';
-import { createInitialExperienceState, getAlongPathMotion } from '../experience/experience-state';
+import { createInitialExperienceState, getAlongPathMotion, updateExperience } from '../experience/experience-state';
 import type { HeliospherePresentation } from './heliosphere-presentation';
 import { mapHeliospherePosition } from './heliosphere-mapping';
 
@@ -73,18 +73,18 @@ it('integrates mapped mesh/path geometry and retained decorative animation throu
   scene.render(heliosphere, 5000);
   expect(decoration()).toEqual(frozen);
   const playing = { ...heliosphere, pathMotion: { ...heliosphere.pathMotion, isPlaying: true } };
-  scene.render(playing, 5010);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.01 }, 5010);
   planets.forEach((mesh) => expect(mesh.rotation.y).toBeCloseTo(1.7 + 10 * 0.00008, 12));
   expect(decoration()).not.toEqual(frozen);
   const beforeReduced = decoration();
-  scene.render({ ...playing, reducedMotion: true }, 6000);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.01, reducedMotion: true }, 6000);
   expect(decoration()).toEqual(beforeReduced);
-  scene.render({ ...playing, reducedMotion: true }, 9000);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.01, reducedMotion: true }, 9000);
   expect(decoration()).toEqual(beforeReduced);
-  scene.render(playing, 9010);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.02 }, 9010);
   planets.forEach((mesh) => expect(mesh.rotation.y).toBeCloseTo(1.7 + 20 * 0.00008, 12));
   const resumed = decoration();
-  scene.render(heliosphere, 10000);
+  scene.render({ ...heliosphere, heliospherePhaseSeconds: 0.02 }, 10000);
   expect(decoration()).toEqual(resumed);
   // Compare the actual generated and visible heliosphere geometry, not a second mapping-only path.
   planets.forEach((mesh, index) => {
@@ -108,6 +108,18 @@ it('integrates mapped mesh/path geometry and retained decorative animation throu
   }
   scene.render({ ...heliosphere, viewOptions: { ...heliosphere.viewOptions, orbitPaths: false } }, 10001);
   expect(visiblePaths.every((line) => !line.visible)).toBe(true);
+  scene.render({ ...heliosphere, heliospherePhaseSeconds: 3 }, 10500);
+  const retained = decoration();
+  scene.handlePresentationHandoff({ kind: 'back', presentation: 'heliosphere', sessionId: 1 }, initial, 11000);
+  const reentered = updateExperience(initial, { type: 'enter-heliosphere' });
+  scene.handlePresentationHandoff({ kind: 'enter', presentation: 'heliosphere', sessionId: 2 }, reentered, 11000);
+  scene.render({ ...heliosphere, heliospherePhaseSeconds: 0 }, 11000);
+  expect(decoration()).toEqual(retained);
+  // Normal physical rotation follows explicit dates even while paused/reduced;
+  // only the high-speed illustrative stabilization consumes retained seconds.
+  const scrubbedRotations = Object.fromEntries(PLANET_IDS.map((id) => [id, 2.6])) as SceneState['rotations'];
+  scene.render({ ...heliosphere, rotationStabilized: false, reducedMotion: true, rotations: scrubbedRotations }, 20000);
+  planets.forEach((mesh) => expect(mesh.rotation.y).toBe(2.6));
   scene.dispose();
 });
 
@@ -137,16 +149,35 @@ it('picks every region from the actual renderer-delivered geometry and respects 
   const camera = capture.camera;
   if (!camera) throw new Error('Missing renderer camera');
   const raycaster = new THREE.Raycaster();
-  for (const [region, radius] of [['solar-wind', 70], ['termination-shock', 111], ['heliosheath', 127], ['heliopause', 144], ['interstellar-space', 158]] as const) {
-    const point = new THREE.Vector3(-1.5 * radius, 0, .8 * radius).project(camera);
-    raycaster.setFromCamera(new THREE.Vector2(point.x, point.y), camera);
-    expect(resolveSceneSelection(raycaster, [], regions)).toEqual({ kind: 'region', region });
-    const layer = region === 'termination-shock' ? 'terminationShock' : 'outerHeliosphere';
-    scene.render({ ...renderState, heliosphereLayers: { outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true, [layer]: false } }, 1);
-    for (const record of regions) expect(record.object.visible).toBe(record.layer !== layer);
-    expect(resolveSceneSelection(raycaster, [], regions)).not.toEqual({ kind: 'region', region });
-    scene.render(renderState, 2);
+  const flow = capture.scene?.getObjectByName('solar-wind-flow');
+  if (!(flow instanceof THREE.Points)) throw new Error('Missing actual flow');
+  const flowRecords: HeliospherePresentation['drawables'] = [{ object: flow, region: 'solar-wind', layer: 'outerHeliosphere' }];
+  const particle = new THREE.Vector3().fromBufferAttribute(flow.geometry.getAttribute('position'), 0);
+  flow.localToWorld(particle);
+  raycaster.set(particle.clone().add(new THREE.Vector3(0, 5, 0)), new THREE.Vector3(0, -1, 0));
+  expect(resolveSceneSelection(raycaster, [], flowRecords)).toEqual({ kind: 'region', region: 'solar-wind' });
+  scene.render({ ...renderState, heliosphereLayers: { outerHeliosphere: false, terminationShock: true, orbitPaths: true, labels: true } }, 1);
+  expect(flow.visible).toBe(false);
+  expect(resolveSceneSelection(raycaster, [], flowRecords)).toBeNull();
+  for (const phase of [0, 5, 15]) {
+    for (const quality of ['high', 'low'] as const) {
+      const animatedState = { ...renderState, heliospherePhaseSeconds: phase, quality };
+      scene.render(animatedState, 100000);
+      const root = regions[0]?.object.parent;
+      if (!root) throw new Error('Missing rendered boundary transform');
+      for (const [region, radius] of [['solar-wind', 70], ['termination-shock', 111], ['heliosheath', 127], ['heliopause', 144], ['interstellar-space', 158]] as const) {
+        const point = root.localToWorld(new THREE.Vector3(-1.5 * radius, 0, .8 * radius)).project(camera);
+        raycaster.setFromCamera(new THREE.Vector2(point.x, point.y), camera);
+        expect(resolveSceneSelection(raycaster, [], regions)).toEqual({ kind: 'region', region });
+        const layer = region === 'termination-shock' ? 'terminationShock' : 'outerHeliosphere';
+        scene.render({ ...animatedState, heliosphereLayers: { outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true, [layer]: false } }, 100001);
+        for (const record of regions) expect(record.object.visible).toBe(record.layer !== layer);
+        expect(resolveSceneSelection(raycaster, [], regions)).not.toEqual({ kind: 'region', region });
+        scene.render(animatedState, 100002);
+      }
+    }
   }
+  scene.render(renderState, 100003);
   // Exercise the actual registered canvas event handlers against visible
   // renderer-delivered geometry, without exposing a gesture test API.
   const point = new THREE.Vector3(-237, 0, 126.4).project(camera);

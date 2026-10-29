@@ -58,3 +58,48 @@ describe('heliosphere display contract', () => {
     expect(presentation.root.children).toHaveLength(0);
   });
 });
+
+it('samples actual nested geometry, flow and shimmer through a complete 20-second cycle with reused resources', () => {
+  const presentation = new HeliospherePresentation();
+  const flow = presentation.root.getObjectByName('solar-wind-flow');
+  if (!(flow instanceof THREE.Points)) throw new Error('Missing actual outward flow');
+  const geometry = flow.geometry;
+  const positions = geometry.getAttribute('position');
+  const initialRadius = Math.hypot(positions.getX(0), positions.getY(0) / .85, positions.getZ(0));
+  const shell = presentation.drawables[0]?.object;
+  if (!(shell instanceof THREE.Mesh)) throw new Error('Missing shell');
+  const initialOpacity = shell.material.opacity;
+  for (const [phase, scale] of [[0, 1], [5, 1.02], [10, 1], [15, .98], [20, 1]] as const) {
+    presentation.render(phase);
+    presentation.root.updateMatrixWorld(true);
+    expect(presentation.root.scale.x).toBeCloseTo(scale, 12);
+    const bounds = presentation.drawables.filter(({ object }) => object instanceof THREE.Mesh).slice(0, 3).map(({ object }) => new THREE.Box3().setFromObject(object));
+    const [outer, middle, inner] = bounds;
+    if (!outer || !middle || !inner) throw new Error('Missing nested bounds');
+    expect(outer.containsBox(middle)).toBe(true);
+    expect(middle.containsBox(inner)).toBe(true);
+  }
+  presentation.render(1);
+  expect(Math.hypot(positions.getX(0), positions.getY(0) / .85, positions.getZ(0))).toBeCloseTo(initialRadius + 2, 5);
+  expect(shell.material.opacity).not.toBe(initialOpacity);
+  const snapshot = Array.from(positions.array);
+  const version = positions.version;
+  const rebuildBounds = vi.spyOn(geometry, 'computeBoundingSphere');
+  presentation.render(1);
+  expect(positions.version).toBe(version);
+  expect(rebuildBounds).not.toHaveBeenCalled();
+  expect(Array.from(positions.array)).toEqual(snapshot);
+  expect(flow.geometry).toBe(geometry);
+  presentation.setLayers({ outerHeliosphere: false, terminationShock: true, orbitPaths: true, labels: true });
+  expect(flow.visible).toBe(false);
+  expect(presentation.drawables.find(({ object }) => object === flow)).toMatchObject({ region: 'solar-wind', layer: 'outerHeliosphere' });
+  presentation.setLayers({ outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true });
+  presentation.render(1);
+  expect(flow.visible).toBe(true);
+  expect(positions.version).toBe(version);
+  const geometryDisposed = vi.spyOn(geometry, 'dispose');
+  const materialDisposed = vi.spyOn(flow.material as THREE.Material, 'dispose');
+  presentation.dispose();
+  expect(geometryDisposed).toHaveBeenCalledOnce();
+  expect(materialDisposed).toHaveBeenCalledOnce();
+});

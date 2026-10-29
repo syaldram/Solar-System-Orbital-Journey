@@ -157,6 +157,16 @@ try {
 }
 
 function dispatch(action: ExperienceAction): void {
+  const inputAt = performance.now();
+  if (state.presentation.kind === 'heliosphere' &&
+      ['play', 'pause', 'set-reduced-motion', 'set-speed', 'scrub', 'replay-solar'].includes(action.type) &&
+      transitionExperience(state, action).state !== state) {
+    const elapsed = Math.max(0, (inputAt - lastAnimationTime) / 1000);
+    lastAnimationTime = inputAt;
+    // Settle the interval under the pre-input permissions and speed. The next
+    // RAF then charges only the interval following this accepted input.
+    if (state.isPlaying) dispatch({ type: 'advance', realSeconds: elapsed });
+  }
   const previousState = state;
   const previousTourKey = `${state.tour.status}:${state.tour.chapter}`;
   const transition = transitionExperience(state, action);
@@ -170,7 +180,10 @@ function dispatch(action: ExperienceAction): void {
     persistPreferences(state);
   }
   const now = performance.now();
-  if (transition.handoff) scene?.handlePresentationHandoff(transition.handoff, state, now);
+  if (transition.handoff) {
+    if (transition.handoff.presentation === 'heliosphere') lastAnimationTime = inputAt;
+    scene?.handlePresentationHandoff(transition.handoff, state, now);
+  }
   if (
     action.type !== 'advance' ||
     now - lastInterfaceRenderAt >= 100 ||
@@ -259,8 +272,17 @@ function rotationsAt(instant: Date): Readonly<Record<PlanetId, number>> {
   };
 }
 
+function syncVisibility(): void {
+  lastAnimationTime = performance.now();
+  dispatch({ type: 'set-page-visible', visible: !document.hidden });
+}
+document.addEventListener('visibilitychange', syncVisibility);
+syncVisibility();
+
 function animate(now: number): void {
-  const elapsedSeconds = Math.min(0.1, Math.max(0, (now - lastAnimationTime) / 1_000));
+  if (state.pageVisible === document.hidden) syncVisibility();
+  const realSeconds = Math.max(0, (now - lastAnimationTime) / 1_000);
+  const elapsedSeconds = state.presentation.kind === 'heliosphere' ? realSeconds : Math.min(0.1, realSeconds);
   lastAnimationTime = now;
   if (state.isPlaying) dispatch({ type: 'advance', realSeconds: elapsedSeconds });
 
@@ -282,6 +304,7 @@ function animate(now: number): void {
         cameraRevision: state.cameraRevision,
         selectedBody: selectedBody(state),
         followedPlanet: state.followedPlanet,
+        heliospherePhaseSeconds: state.presentation.kind === 'heliosphere' ? state.presentation.phaseSeconds : undefined,
         heliosphereLayers: state.presentation.kind === 'heliosphere' ? state.presentation.layers : undefined,
         viewOptions: state.presentation.kind === 'heliosphere' ? { orbitPaths: state.presentation.layers.orbitPaths, labels: state.presentation.layers.labels, trails: false, planeOverlays: false } : state.viewOptions,
         quality: state.quality,

@@ -634,3 +634,86 @@ it('owns a single tagged selection and four isolated heliosphere session layers'
   state = updateExperience(state, { type: 'enter-heliosphere' });
   expect(state.presentation).toMatchObject({ layers: { outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true } });
 });
+
+it('retains active heliosphere seconds independently of speed, settings, visibility and scientific clocks', () => {
+  let state = updateExperience(createInitialExperienceState(TODAY), { type: 'enter-heliosphere' });
+  const phase = () => state.presentation.kind === 'heliosphere' ? state.presentation.phaseSeconds : -1;
+  const act = (action: ExperienceAction) => { state = updateExperience(state, action); };
+  act({ type: 'advance', realSeconds: 5 });
+  expect(phase()).toBe(0);
+  for (const speed of ['day', 'month', 'year', 'decade'] as const) {
+    act({ type: 'set-speed', speed });
+    act({ type: 'play' });
+    act({ type: 'advance', realSeconds: 1.25 });
+  }
+  expect(phase()).toBe(5);
+  for (const realSeconds of [-1, NaN, Infinity]) act({ type: 'advance', realSeconds });
+  expect(phase()).toBe(5);
+  act({ type: 'set-heliosphere-layer', layer: 'outerHeliosphere', enabled: false });
+  act({ type: 'set-quality', quality: 'low' });
+  act({ type: 'select-region', region: 'heliopause' });
+  act({ type: 'reset-camera' });
+  expect(phase()).toBe(5);
+  act({ type: 'set-reduced-motion', enabled: true });
+  const before = state.currentTimeMs;
+  act({ type: 'advance', realSeconds: 1 });
+  expect(state.currentTimeMs).toBeGreaterThan(before);
+  expect(phase()).toBe(5);
+  act({ type: 'pause' });
+  act({ type: 'set-reduced-motion', enabled: false });
+  expect(state.isPlaying).toBe(false);
+  act({ type: 'play' });
+  act({ type: 'set-page-visible', visible: false });
+  const hiddenDate = state.currentTimeMs;
+  act({ type: 'play' });
+  act({ type: 'advance', realSeconds: 1000 });
+  act({ type: 'set-page-visible', visible: true });
+  expect(state.isPlaying).toBe(false);
+  expect(state.currentTimeMs).toBe(hiddenDate);
+  expect(phase()).toBe(5);
+  act({ type: 'play' });
+  act({ type: 'advance', realSeconds: 2 });
+  expect(phase()).toBe(7);
+  act({ type: 'scrub', timeMs: state.startTimeMs });
+  expect(state.isPlaying).toBe(false);
+  expect(phase()).toBe(7);
+  act({ type: 'advance', realSeconds: 10 });
+  expect(phase()).toBe(7);
+  expect(state.galacticElapsedMillionYears).toBe(0);
+  act({ type: 'leave-heliosphere' });
+  act({ type: 'play' });
+  act({ type: 'advance', realSeconds: 1 });
+  act({ type: 'enter-heliosphere' });
+  expect(phase()).toBe(0);
+});
+
+it('preserves playing and paused playback for both directions of the reduced-motion toggle', () => {
+  for (const playing of [true, false]) {
+    for (const enabled of [true, false]) {
+      let state = updateExperience(createInitialExperienceState(TODAY), { type: 'enter-heliosphere' });
+      state = updateExperience(state, { type: 'set-reduced-motion', enabled: !enabled });
+      if (playing) state = updateExperience(state, { type: 'play' });
+      const dateBefore = state.currentTimeMs;
+      const presentationBefore = state.presentation;
+      state = updateExperience(state, { type: 'set-reduced-motion', enabled });
+      expect(state.isPlaying).toBe(playing);
+      expect(state.presentation).toBe(presentationBefore);
+      state = updateExperience(state, { type: 'advance', realSeconds: 2 });
+      expect(state.currentTimeMs > dateBefore).toBe(playing);
+      expect(state.presentation.kind === 'heliosphere' && state.presentation.phaseSeconds).toBe(playing && !enabled ? 2 : 0);
+    }
+  }
+});
+
+it('advances the final permitted endpoint fraction then retains the phase without looping', () => {
+  let state = updateExperience(createInitialExperienceState(TODAY), { type: 'enter-heliosphere' });
+  state = updateExperience(state, { type: 'set-speed', speed: 'day' });
+  state = updateExperience(state, { type: 'scrub', timeMs: state.endTimeMs - 86400000 / 4 });
+  state = updateExperience(state, { type: 'play' });
+  state = updateExperience(state, { type: 'advance', realSeconds: 20 });
+  expect(state.currentTimeMs).toBe(state.endTimeMs);
+  expect(state.isPlaying).toBe(false);
+  expect(state.journeyComplete).toBe(true);
+  expect(state.presentation.kind === 'heliosphere' && state.presentation.phaseSeconds).toBe(0.25);
+  expect(updateExperience(state, { type: 'advance', realSeconds: 100 })).toBe(state);
+});

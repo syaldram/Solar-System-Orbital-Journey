@@ -44,6 +44,7 @@ import { SolarPresentation } from './solar-presentation';
 export interface SceneState {
   readonly gravity: boolean;
   readonly heliosphere: boolean;
+  readonly heliospherePhaseSeconds?: number;
   readonly heliosphereLayers?: HeliosphereLayers;
   readonly snapshot: SystemSnapshot;
   readonly frame: ViewMode;
@@ -85,8 +86,8 @@ function toSceneVector(position: Vector3Au, scale = AU_SCALE): THREE.Vector3 {
 export class OrbitalScene {
   private readonly heliospherePresentation = new HeliospherePresentation();
   private readonly heliosphereOrbitLines = new Map<PlanetId, THREE.Line>();
-  private decorativeDeltaMs = 0;
-  private lastRenderMs: number | null = null;
+  private readonly heliosphereSpinOffsets = new Map<PlanetId, number>();
+  private heliosphereSpinActive = false;
   private readonly gravityPresentation = new GravityPresentation();
   private readonly gravityOrbitLines = new Map<PlanetId, THREE.Line>();
   private readonly gravityOrbitPoints = new Map<PlanetId, readonly { readonly x: number; readonly z: number }[]>();
@@ -243,10 +244,10 @@ export class OrbitalScene {
 
   render(state: SceneState, nowMs: number): void {
     this.currentState = state;
-    const delta = this.lastRenderMs === null ? 0 : Math.min(100, Math.max(0, nowMs - this.lastRenderMs));
-    this.lastRenderMs = nowMs;
-    this.decorativeDeltaMs = state.heliosphere && state.pathMotion.isPlaying && !state.reducedMotion ? delta : 0;
+    if (!state.heliosphere || !state.rotationStabilized) this.heliosphereSpinActive = false;
     this.applyView(state);
+    this.heliosphereSpinActive = state.heliosphere && state.rotationStabilized;
+    if (state.heliosphere) this.heliospherePresentation.render(state.heliospherePhaseSeconds ?? 0);
     this.cameraController.render(state, nowMs);
     this.pathGuidePresentation.render({
       frame: state.gravity || state.heliosphere ? 'sun' : state.frame,
@@ -257,6 +258,7 @@ export class OrbitalScene {
     }, nowMs);
     this.solarPresentation.render({
       nowMs,
+      phaseSeconds: state.heliosphere ? state.heliospherePhaseSeconds ?? 0 : undefined,
       frozen: state.heliosphere && (!state.pathMotion.isPlaying || state.reducedMotion),
       reducedMotion: state.heliosphere ? false : state.reducedMotion,
       visible: state.frame !== 'galaxy',
@@ -278,6 +280,13 @@ export class OrbitalScene {
   }
 
   handlePresentationHandoff(handoff: PresentationHandoff, state: ExperienceState, nowMs: number): void {
+    if (handoff.presentation === 'heliosphere') {
+      this.heliosphereSpinActive = false;
+      // A frozen baseline sample clears the prior explicit-phase offset even
+      // when Back and re-entry happen before a scientific frame can render.
+      this.solarPresentation.render({ nowMs, frozen: true, reducedMotion: false,
+        visible: state.frame !== 'galaxy', quality: getRenderingQualityProfile(state.quality) });
+    }
     this.cameraController.handlePresentationHandoff(handoff, {
       gravity: state.presentation.kind === 'gravity',
       heliosphere: state.presentation.kind === 'heliosphere',
@@ -537,10 +546,11 @@ export class OrbitalScene {
       } else tilt.position.copy(toSceneVector(relative));
       tilt.scale.setScalar(state.heliosphere ? heliosphereBodyRadius(id) / planetDisplayRadius(id) : state.gravity ? gravityBodyRadius(id) / planetDisplayRadius(id) : 1);
       if (state.heliosphere) {
-        if (state.pathMotion.isPlaying && !state.reducedMotion) {
-          if (state.rotationStabilized) mesh.rotation.y += this.decorativeDeltaMs * 0.00008;
-          else mesh.rotation.y = state.rotations[id];
-        }
+        const phase = state.heliospherePhaseSeconds ?? 0;
+        if (state.rotationStabilized) {
+          if (!this.heliosphereSpinActive) this.heliosphereSpinOffsets.set(id, mesh.rotation.y - phase * 0.08);
+          mesh.rotation.y = (this.heliosphereSpinOffsets.get(id) ?? 0) + phase * 0.08;
+        } else mesh.rotation.y = state.rotations[id];
       } else mesh.rotation.y = state.rotationStabilized && !(state.gravity && state.reducedMotion)
         ? performance.now() * 0.00008 : state.rotations[id];
       mesh.visible = !isGalaxy;
