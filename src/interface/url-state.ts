@@ -1,11 +1,13 @@
 import { PLANET_IDS } from '../astronomy/planet-data';
 import type {
+  PresentationState,
   CameraBookmark,
   SelectableBody,
   ViewMode,
 } from '../experience/experience-state';
 
 export interface ShareableView {
+  readonly presentation?: PresentationState;
   readonly timeMs: number;
   readonly frame: ViewMode;
   readonly selectedBody: SelectableBody | null;
@@ -21,6 +23,7 @@ function includes<T extends string>(values: readonly T[], value: string | null):
 }
 
 export function encodeSharedView(view: ShareableView): URLSearchParams {
+  if (view.presentation && view.presentation.kind !== 'scientific') throw new Error('Schematic sessions cannot be shared. Use Back to share a scientific view.');
   const params = new URLSearchParams({
     date: new Date(view.timeMs).toISOString(),
     view: view.frame,

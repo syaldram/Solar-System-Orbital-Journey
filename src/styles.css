@@ -240,3 +240,22 @@ button:disabled { cursor: default; opacity: .5; }
 .app[data-gravity="true"] .scene-status { top: 4.5rem; max-width: calc(100vw - 2rem); }
 .app[data-gravity="true"] .body-marker[data-label-mode="persistent"] .body-marker__name,
 .app[data-gravity="true"] .body-marker[aria-current="true"] .body-marker__name { pointer-events: auto; cursor: pointer; }
+
+.heliosphere-camera-controls { position: fixed; right: 1rem; top: 9rem; display: grid; grid-template-columns: repeat(2, 1fr); gap: .3rem; padding: .4rem; border-radius: .6rem; background: var(--panel); pointer-events: auto; }
+.heliosphere-camera-controls button { min-height: 36px; padding: .4rem; font-size: .7rem; }
+.app[data-heliosphere="true"] .side-panel { max-height: calc(100dvh - 16rem); overflow: auto; }
+@media (max-width: 700px) {
+  .app[data-heliosphere="true"] .topbar { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .app[data-heliosphere="true"] .topbar__actions { flex-wrap: wrap; }
+  .app[data-heliosphere="true"] .scene-status { top: 5rem; }
+  .app[data-heliosphere="true"] .gravity-disclosure { top: 10rem; }
+  .heliosphere-camera-controls { top: auto; bottom: 13rem; right: .5rem; max-height: 34vh; overflow-y: auto; }
+  .heliosphere-camera-controls button { min-height: 36px; }
+}
+.app[data-heliosphere="true"] .heliosphere-camera-controls { left: 1rem; right: auto; top: 12rem; }
+@media (max-width: 700px) {
+  .app[data-heliosphere="true"] .gravity-disclosure { top: 9rem; }
+  .app[data-heliosphere="true"] .heliosphere-camera-controls { left: .7rem; right: .7rem; top: 12.5rem; bottom: auto; display: flex; flex-wrap: nowrap; overflow-x: auto; max-height: none; gap: .4rem; }
+  .heliosphere-camera-controls button { flex: 0 0 auto; min-height: 44px; }
+  .app[data-heliosphere="true"] .planet-card { max-height: calc(100dvh - 26rem); }
+}

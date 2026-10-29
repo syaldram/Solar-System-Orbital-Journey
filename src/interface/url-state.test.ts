@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { createInitialExperienceState, updateExperience } from '../experience/experience-state';
 import { decodeSharedView, encodeSharedView } from './url-state';
 
 describe('shareable URL state', () => {
@@ -40,4 +41,11 @@ describe('shareable URL state', () => {
       cameraBookmark: 'full',
     });
   });
+});
+
+it.each(['enter-heliosphere', 'enter-gravity'] as const)('rejects direct schematic serialization: %s', (type) => {
+  const state = updateExperience(createInitialExperienceState(new Date('2026-10-29')), { type });
+  expect(() => encodeSharedView({ ...state, timeMs: state.currentTimeMs })).toThrow(/Back/);
+  const restored = updateExperience(state, { type: type === 'enter-gravity' ? 'leave-gravity' : 'leave-heliosphere' });
+  expect(encodeSharedView({ ...restored, timeMs: restored.currentTimeMs }).has('presentation')).toBe(false);
 });

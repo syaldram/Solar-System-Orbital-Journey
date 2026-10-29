@@ -132,6 +132,7 @@ const appInterface = new AppInterface({
     dispatch({ type: 'reset-camera' });
     scene?.resetCamera();
   },
+  onNavigateCamera: (command) => scene?.navigateCamera(command),
   onReturnHome: () => dispatch({ type: 'return-home' }),
 });
 
@@ -200,7 +201,7 @@ function renderInterface(): void {
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
-      state.presentation.kind === 'gravity' || state.frame === 'sun' ? 'sun' : 'space',
+      state.presentation.kind !== 'scientific' || state.frame === 'sun' ? 'sun' : 'space',
     );
     const planet = snapshot.planets.find(({ id }) => id === state.selectedBody);
     if (planet) {
@@ -221,11 +222,12 @@ function renderInterface(): void {
 }
 
 async function shareCurrentView(): Promise<void> {
-  if (state.presentation.kind === 'gravity') {
+  if (state.presentation.kind !== 'scientific') {
     appInterface.showToast('Sharing is unavailable in this session-only schematic. Use Back to share a scientific view.');
     return;
   }
   const params = encodeSharedView({
+    presentation: state.presentation,
     timeMs: state.currentTimeMs,
     frame: state.frame,
     selectedBody: state.selectedBody,
@@ -265,19 +267,20 @@ function animate(now: number): void {
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
-      state.presentation.kind === 'gravity' || state.frame === 'sun' ? 'sun' : 'space',
+      state.presentation.kind !== 'scientific' || state.frame === 'sun' ? 'sun' : 'space',
     );
     const galacticPresentation = getGalacticOrbitPresentation(state);
     scene.render(
       {
         snapshot,
         gravity: state.presentation.kind === 'gravity',
+        heliosphere: state.presentation.kind === 'heliosphere',
         frame: state.frame,
         bookmark: state.cameraBookmark,
         cameraRevision: state.cameraRevision,
         selectedBody: state.selectedBody,
         followedPlanet: state.followedPlanet,
-        viewOptions: state.viewOptions,
+        viewOptions: state.presentation.kind === 'heliosphere' ? { orbitPaths: true, labels: true, trails: false, planeOverlays: false } : state.viewOptions,
         quality: state.quality,
         reducedMotion: state.reducedMotion,
         rotations: rotationsAt(instant),

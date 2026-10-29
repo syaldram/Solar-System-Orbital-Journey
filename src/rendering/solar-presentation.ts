@@ -10,6 +10,7 @@ import type { RenderingQualityProfile } from './quality-profile';
 
 export interface SolarPresentationState {
   readonly nowMs: number;
+  readonly frozen?: boolean;
   readonly reducedMotion: boolean;
   readonly visible: boolean;
   readonly quality: RenderingQualityProfile;
@@ -73,7 +74,7 @@ export class SolarPresentation {
   render(state: SolarPresentationState): void {
     const elapsedSeconds = Math.min(0.05, Math.max(0, (state.nowMs - this.lastAnimationAt) / 1_000));
     this.lastAnimationAt = state.nowMs;
-    if (!state.reducedMotion) this.animationTime += elapsedSeconds * 0.22;
+    if (!state.reducedMotion && !state.frozen) this.animationTime += elapsedSeconds * 0.22;
 
     this.mesh.visible = state.visible;
     this.glow.visible = state.visible;

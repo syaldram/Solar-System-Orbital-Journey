@@ -29,14 +29,14 @@ export interface ScientificReturnContext {
 export type PresentationState =
   | { readonly kind: 'scientific' }
   | {
-      readonly kind: 'gravity';
+      readonly kind: 'gravity' | 'heliosphere';
       readonly sessionId: number;
       readonly returnContext: ScientificReturnContext;
     };
 
 export type PresentationHandoff = {
   readonly kind: 'enter' | 'back' | 'discard';
-  readonly presentation: 'gravity';
+  readonly presentation: 'gravity' | 'heliosphere';
   readonly sessionId: number;
 };
 
@@ -84,6 +84,8 @@ export interface GalacticOrbitPresentation {
 }
 
 export type ExperienceAction =
+  | { readonly type: 'enter-heliosphere' }
+  | { readonly type: 'leave-heliosphere' }
   | { readonly type: 'enter-gravity' }
   | { readonly type: 'leave-gravity' }
   | { readonly type: 'play' }
@@ -235,22 +237,23 @@ export function transitionExperience(state: ExperienceState, action: ExperienceA
   const next = updateExperience(state, action);
   const before = state.presentation;
   const after = next.presentation;
-  const handoff: PresentationHandoff | null = before.kind === 'scientific' && after.kind === 'gravity'
-    ? { kind: 'enter', presentation: 'gravity', sessionId: after.sessionId }
-    : before.kind === 'gravity' && after.kind === 'scientific'
-      ? { kind: action.type === 'leave-gravity' ? 'back' : 'discard', presentation: 'gravity', sessionId: before.sessionId }
+  const handoff: PresentationHandoff | null = before.kind === 'scientific' && after.kind !== 'scientific'
+    ? { kind: 'enter', presentation: after.kind, sessionId: after.sessionId }
+    : before.kind !== 'scientific' && after.kind === 'scientific'
+      ? { kind: (action.type === 'leave-gravity' || action.type === 'leave-heliosphere') ? 'back' : 'discard', presentation: before.kind, sessionId: before.sessionId }
       : null;
   return { state: next, handoff };
 }
 
 export function updateExperience(state: ExperienceState, action: ExperienceAction): ExperienceState {
   switch (action.type) {
+    case 'enter-heliosphere':
     case 'enter-gravity':
       if (state.presentation.kind !== 'scientific' || state.frame === 'galaxy' || state.tour.status === 'running') return state;
       return {
         ...state,
         presentation: {
-          kind: 'gravity',
+          kind: action.type === 'enter-gravity' ? 'gravity' : 'heliosphere',
           sessionId: state.nextPresentationSessionId,
           returnContext: { frame: state.frame, selectedBody: state.selectedBody, bookmark: state.cameraBookmark },
         },
@@ -259,8 +262,9 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         followedPlanet: null,
         trailRevision: state.trailRevision + 1,
       };
+    case 'leave-heliosphere':
     case 'leave-gravity':
-      if (state.presentation.kind !== 'gravity') return state;
+      if (state.presentation.kind !== (action.type === 'leave-gravity' ? 'gravity' : 'heliosphere')) return state;
       return {
         ...state,
         frame: state.presentation.returnContext.frame,
@@ -315,6 +319,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
       return {
         ...state,
         currentTimeMs,
+        isPlaying: state.presentation.kind === 'heliosphere' ? false : state.isPlaying,
         journeyComplete: currentTimeMs >= state.endTimeMs,
         journeyCompletionDismissed: false,
       };
@@ -371,7 +376,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
             isPlaying: false,
           };
     case 'set-frame':
-      if (state.presentation.kind === 'gravity') return updateExperience(discardPresentation(state), action);
+      if (state.presentation.kind !== 'scientific') return updateExperience(discardPresentation(state), action);
       return action.frame === state.frame
         ? state
         : {
@@ -410,7 +415,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     case 'reset-camera':
       return { ...state, followedPlanet: null };
     case 'return-home':
-      if (state.presentation.kind === 'gravity') return updateExperience(discardPresentation(state), action);
+      if (state.presentation.kind !== 'scientific') return updateExperience(discardPresentation(state), action);
       return { ...state, isPlaying: false, followedPlanet: null };
     case 'set-bookmark':
       return {
@@ -420,7 +425,8 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
         cameraRevision: state.cameraRevision + 1,
       };
     case 'set-view-option':
-      if (state.presentation.kind === 'gravity' && (action.option === 'trails' || action.option === 'planeOverlays')) return state;
+      if (state.presentation.kind === 'heliosphere') return state;
+      if (state.presentation.kind !== 'scientific' && (action.option === 'trails' || action.option === 'planeOverlays')) return state;
       return {
         ...state,
         viewOptions: { ...state.viewOptions, [action.option]: action.enabled },
@@ -434,7 +440,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     case 'set-quality':
       return { ...state, quality: action.quality };
     case 'start-tour':
-      if (state.presentation.kind === 'gravity') return updateExperience(discardPresentation(state), action);
+      if (state.presentation.kind !== 'scientific') return updateExperience(discardPresentation(state), action);
       return {
         ...state,
         isPlaying: false,
@@ -470,7 +476,7 @@ export function updateExperience(state: ExperienceState, action: ExperienceActio
     case 'skip-tour':
       return { ...state, isPlaying: false, tour: { ...state.tour, status: 'skipped' } };
     case 'replay':
-      if (state.presentation.kind === 'gravity') return updateExperience(discardPresentation(state), action);
+      if (state.presentation.kind !== 'scientific') return updateExperience(discardPresentation(state), action);
       return {
         ...state,
         currentTimeMs: state.startTimeMs,
