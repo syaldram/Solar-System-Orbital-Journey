@@ -37,6 +37,7 @@ import { getRenderingQualityProfile } from './quality-profile';
 import { GravityPresentation } from './gravity-presentation';
 import { compressGravityPosition, gravityCenters, gravityBodyPosition, gravityBodyRadius, gravitySurfaceHeight, GRAVITY_SUN_RADIUS } from './gravity-mapping';
 import { HeliospherePresentation } from './heliosphere-presentation';
+import { HeliosphereBackground } from './heliosphere-background';
 import { mapHeliospherePosition, heliosphereBodyRadius, HELIOSPHERE_SUN_RADIUS } from './heliosphere-mapping';
 import type { CameraNavigation } from './scene-camera-controller';
 import { SolarPresentation } from './solar-presentation';
@@ -84,6 +85,7 @@ function toSceneVector(position: Vector3Au, scale = AU_SCALE): THREE.Vector3 {
 
 
 export class OrbitalScene {
+  private readonly heliosphereBackground = new HeliosphereBackground();
   private readonly heliospherePresentation = new HeliospherePresentation();
   private readonly heliosphereOrbitLines = new Map<PlanetId, THREE.Line>();
   private readonly heliosphereSpinOffsets = new Map<PlanetId, number>();
@@ -142,7 +144,7 @@ export class OrbitalScene {
 
     this.galaxyPresentation = new GalaxyPresentation();
     this.pathGuidePresentation = new PathGuidePresentation(options.labelLayer);
-    this.scene.add(this.heliospherePresentation.root, this.gravityPresentation.root, this.solarGroup, this.pathGuidePresentation.root, this.galaxyPresentation.root);
+    this.scene.add(this.heliosphereBackground.root, this.heliospherePresentation.root, this.gravityPresentation.root, this.solarGroup, this.pathGuidePresentation.root, this.galaxyPresentation.root);
     this.starField = this.createStarField();
     this.scene.add(this.starField);
 
@@ -249,6 +251,7 @@ export class OrbitalScene {
     this.heliosphereSpinActive = state.heliosphere && state.rotationStabilized;
     if (state.heliosphere) this.heliospherePresentation.render(state.heliospherePhaseSeconds ?? 0);
     this.cameraController.render(state, nowMs);
+    this.heliosphereBackground.placeAroundCamera(this.camera.position);
     this.pathGuidePresentation.render({
       frame: state.gravity || state.heliosphere ? 'sun' : state.frame,
       bookmark: state.gravity || state.heliosphere ? 'inner' : state.bookmark,
@@ -309,6 +312,7 @@ export class OrbitalScene {
   }
 
   dispose(): void {
+    this.heliosphereBackground.dispose();
     this.gravityPresentation.dispose();
     this.heliospherePresentation.dispose();
     this.cameraController.controls.dispose();
@@ -328,6 +332,7 @@ export class OrbitalScene {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    if (this.currentState) this.applyQuality(this.currentState.quality, this.currentState.frame);
   }
 
   private createPlanet(id: PlanetId): void {
@@ -516,6 +521,7 @@ export class OrbitalScene {
     const isGalaxy = state.frame === 'galaxy';
     const isFullJourney = !(state.gravity || state.heliosphere) && state.frame === 'space' && state.bookmark === 'full';
     this.heliospherePresentation.root.visible = state.heliosphere;
+    this.heliosphereBackground.root.visible = state.heliosphere;
     this.heliospherePresentation.setLayers(state.heliosphereLayers ?? defaultHeliosphereLayers());
     this.gravityPresentation.root.visible = state.gravity;
     this.starField.visible = !(state.gravity || state.heliosphere);
@@ -673,9 +679,11 @@ export class OrbitalScene {
 
   private applyQuality(preference: QualityPreference, frame: ViewMode): void {
     const quality = getRenderingQualityProfile(preference);
-    const qualityKey = `${preference}:${frame}:${window.devicePixelRatio}`;
+    const viewportWidth = this.renderer.domElement.clientWidth || window.innerWidth;
+    const qualityKey = `${preference}:${frame}:${window.devicePixelRatio}:${viewportWidth}`;
     if (qualityKey === this.appliedQualityKey) return;
     this.appliedQualityKey = qualityKey;
+    this.heliosphereBackground.setDensity(quality, viewportWidth);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.starField.geometry.setDrawRange(
       0,

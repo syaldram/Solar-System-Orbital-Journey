@@ -8,11 +8,11 @@ import { createInitialExperienceState, getAlongPathMotion, updateExperience } fr
 import type { HeliospherePresentation } from './heliosphere-presentation';
 import { mapHeliospherePosition } from './heliosphere-mapping';
 
-const capture = vi.hoisted(() => ({ scene: null as THREE.Scene | null, camera: null as THREE.PerspectiveCamera | null }));
+const capture = vi.hoisted(() => ({ scene: null as THREE.Scene | null, camera: null as THREE.PerspectiveCamera | null, width: 1280 }));
 vi.mock('three', async (original) => {
   const actual = await original<typeof THREE>();
   return { ...actual, WebGLRenderer: class {
-    domElement = { clientWidth: 1280, clientHeight: 720, addEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1280, height: 720 }) };
+    domElement = { get clientWidth() { return capture.width; }, clientHeight: 720, addEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1280, height: 720 }) };
     capabilities = { getMaxAnisotropy: () => 1 };
     setClearColor() {} setPixelRatio() {} setSize() {} dispose() {}
     render(scene: THREE.Scene, camera: THREE.PerspectiveCamera) { scene.updateMatrixWorld(); capture.scene = scene; capture.camera = camera; }
@@ -36,7 +36,7 @@ vi.mock('./procedural-materials', () => ({
   createAtmosphereMaterial: () => new THREE.MeshBasicMaterial(),
   createSunMaterial: () => new THREE.ShaderMaterial({ uniforms: { time: { value: 0 } } }),
 }));
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { capture.width = 1280; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('integrates mapped mesh/path geometry and retained decorative animation through pause/reduced/resume', () => {
   vi.stubGlobal('window', { devicePixelRatio: 1, addEventListener() {}, requestIdleCallback() {} });
@@ -69,6 +69,15 @@ it('integrates mapped mesh/path geometry and retained decorative animation throu
   });
   const heliosphere = { ...state, heliosphere: true, rotationStabilized: true };
   scene.render(heliosphere, 100);
+  const background = capture.scene?.getObjectByName('heliosphere-background');
+  const stars = background?.getObjectByName('heliosphere-distant-stars');
+  const band = background?.getObjectByName('heliosphere-milky-way-band');
+  if (!background || !(stars instanceof THREE.Points) || !(band instanceof THREE.Mesh)) throw new Error('Missing actual background artwork');
+  expect(background.parent).toBe(capture.scene);
+  expect(background.visible).toBe(true);
+  const sky = () => ({ transform: background.matrixWorld.toArray(), children: [band.matrix.toArray(), stars.matrix.toArray()], stars: Array.from(stars.geometry.getAttribute('position').array), starMaterial: stars.material.toJSON(), band: band.material.toJSON() });
+  const staticSky = sky();
+  expect(stars.geometry.drawRange.count).toBe(900);
   const frozen = decoration();
   scene.render(heliosphere, 5000);
   expect(decoration()).toEqual(frozen);
@@ -82,6 +91,18 @@ it('integrates mapped mesh/path geometry and retained decorative animation throu
   scene.render({ ...playing, heliospherePhaseSeconds: 0.01, reducedMotion: true }, 9000);
   expect(decoration()).toEqual(beforeReduced);
   scene.render({ ...playing, heliospherePhaseSeconds: 0.02 }, 9010);
+  expect(sky()).toEqual(staticSky);
+  const mappedBeforeQuality = planets.map((mesh) => mesh.getWorldPosition(new THREE.Vector3()).toArray());
+  scene.render({ ...playing, quality: 'low', heliospherePhaseSeconds: 0.02 }, 9011);
+  expect(stars.geometry.drawRange.count).toBe(280);
+  expect(planets.map((mesh) => mesh.getWorldPosition(new THREE.Vector3()).toArray())).toEqual(mappedBeforeQuality);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.02 }, 9012);
+  capture.width = 390;
+  scene.resize();
+  expect(stars.geometry.drawRange.count).toBe(405);
+  capture.width = 1280;
+  scene.resize();
+  expect(stars.geometry.drawRange.count).toBe(900);
   planets.forEach((mesh) => expect(mesh.rotation.y).toBeCloseTo(1.7 + 20 * 0.00008, 12));
   const resumed = decoration();
   scene.render({ ...heliosphere, heliospherePhaseSeconds: 0.02 }, 10000);
@@ -120,7 +141,19 @@ it('integrates mapped mesh/path geometry and retained decorative animation throu
   const scrubbedRotations = Object.fromEntries(PLANET_IDS.map((id) => [id, 2.6])) as SceneState['rotations'];
   scene.render({ ...heliosphere, rotationStabilized: false, reducedMotion: true, rotations: scrubbedRotations }, 20000);
   planets.forEach((mesh) => expect(mesh.rotation.y).toBe(2.6));
+  expect(sky().stars).toEqual(staticSky.stars);
+  expect(sky().band).toEqual(staticSky.band);
+  expect(sky().children).toEqual(staticSky.children);
+  expect(sky().starMaterial).toEqual(staticSky.starMaterial);
+  expect(background.position.toArray()).toEqual(capture.camera?.position.toArray());
+  scene.render(state, 21000);
+  expect(background.visible).toBe(false);
+  scene.render(heliosphere, 22000);
+  expect(capture.scene?.getObjectByName('heliosphere-background')).toBe(background);
+  const disposals = [band.geometry, band.material, stars.geometry, stars.material].map((resource) => vi.spyOn(resource, 'dispose'));
   scene.dispose();
+  disposals.forEach((dispose) => expect(dispose).toHaveBeenCalledTimes(1));
+  expect(background.children).toHaveLength(0);
 });
 
 it('picks every region from the actual renderer-delivered geometry and respects hidden ancestors', () => {

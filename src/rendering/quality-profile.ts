@@ -5,6 +5,7 @@ export interface RenderingQualityProfile {
   readonly gravityGridDensity: number;
   readonly pixelRatioCap: number;
   readonly localStarCount: number;
+  readonly heliosphereStarCount: number;
   readonly galaxyForegroundStarCount: number;
   readonly galaxyStarCount: number;
   readonly solarCoronaLayerCount: number;
@@ -23,6 +24,7 @@ const RENDERING_QUALITY_PROFILES: Readonly<Record<QualityTier, RenderingQualityP
     gravityGridDensity: 128,
     pixelRatioCap: 2,
     localStarCount: 7_500,
+    heliosphereStarCount: 900,
     galaxyForegroundStarCount: 450,
     galaxyStarCount: 1_200,
     solarCoronaLayerCount: 3,
@@ -39,6 +41,7 @@ const RENDERING_QUALITY_PROFILES: Readonly<Record<QualityTier, RenderingQualityP
     gravityGridDensity: 96,
     pixelRatioCap: 1.5,
     localStarCount: 4_500,
+    heliosphereStarCount: 550,
     galaxyForegroundStarCount: 260,
     galaxyStarCount: 700,
     solarCoronaLayerCount: 2,
@@ -55,6 +58,7 @@ const RENDERING_QUALITY_PROFILES: Readonly<Record<QualityTier, RenderingQualityP
     gravityGridDensity: 64,
     pixelRatioCap: 1,
     localStarCount: 2_300,
+    heliosphereStarCount: 280,
     galaxyForegroundStarCount: 120,
     galaxyStarCount: 320,
     solarCoronaLayerCount: 1,

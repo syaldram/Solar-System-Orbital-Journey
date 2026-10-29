@@ -47,6 +47,22 @@ async function observeHeliosphereRender(page: Page): Promise<void> {
 const originalRender = OrbitalScene.prototype.render;
 OrbitalScene.prototype.render = function(state, now) {
   originalRender.call(this, state, now);
+  const sky = this.heliosphereBackground.root;
+  const stars = sky.getObjectByName('heliosphere-distant-stars');
+  const band = sky.getObjectByName('heliosphere-milky-way-band');
+  window.__heliosphereSky = {
+    visible: sky.visible,
+    ids: [sky.uuid, band.geometry.uuid, band.material.uuid, stars.geometry.uuid, stars.material.uuid],
+    transform: sky.matrixWorld.toArray(),
+    starCount: stars.geometry.drawRange.count,
+    positions: Array.from(stars.geometry.getAttribute('position').array).slice(0, 12),
+    uniforms: Object.keys(band.material.uniforms),
+    children: [band.matrix.toArray(), stars.matrix.toArray()],
+    starMaterial: stars.material.toJSON(),
+    camera: this.camera.position.toArray(),
+    direction: this.camera.quaternion.toArray(),
+    cameraDistance: this.camera.position.distanceTo(this.cameraController.controls.target),
+  };
   if (!state.heliosphere) return;
   const presentation = this.heliospherePresentation;
   const flow = presentation.root.getObjectByName('solar-wind-flow');
@@ -102,6 +118,200 @@ async function renderedFrames(page: Page, count = 4): Promise<void> {
     requestAnimationFrame(next);
   }), count);
 }
+
+interface HeliosphereSkySample {
+  visible: boolean;
+  ids: string[];
+  transform: number[];
+  starCount: number;
+  positions: number[];
+  uniforms: string[];
+  children: number[][];
+  starMaterial: unknown;
+  camera: number[];
+  direction: number[];
+  cameraDistance: number;
+}
+
+async function heliosphereSky(page: Page): Promise<HeliosphereSkySample> {
+  return page.evaluate(() => (window as unknown as { __heliosphereSky: HeliosphereSkySample }).__heliosphereSky);
+}
+
+function collectRenderErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  return errors;
+}
+
+test('Heliosphere static sky adapts actual density and retains readable semantic controls across layouts', async ({ page, browserName }, testInfo) => {
+  const errors = collectRenderErrors(page);
+  await observeHeliosphereRender(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('./?view=sun');
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Visual quality').selectOption('high');
+  await page.getByRole('button', { name: 'Close options' }).click();
+  await page.locator('#enter-heliosphere').click();
+  await renderedFrames(page);
+  const initial = await heliosphereSky(page);
+  expect(initial.visible).toBe(true);
+  expect(initial.starCount).toBe(900);
+  expect(initial.uniforms).toEqual([]);
+  await renderedFrames(page, 10);
+  expect(await heliosphereSky(page)).toEqual(initial);
+  await captureHeliosphere(page, testInfo, 'sky-desktop-high-labels');
+  await page.locator('#play-toggle').click();
+  await expect.poll(async () => (await heliosphereRender(page)).phase).toBeGreaterThan(.2);
+  expect(await heliosphereSky(page)).toEqual(initial);
+  await page.locator('#play-toggle').click();
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Reduce motion').check();
+  await expect(page.getByLabel('Reduce motion')).toBeChecked();
+  await page.getByRole('button', { name: 'Close options' }).click();
+  await renderedFrames(page);
+  expect(await page.evaluate(() => (window as unknown as { __heliospherePlayback: { reducedMotion: boolean } }).__heliospherePlayback.reducedMotion)).toBe(true);
+  expect(await heliosphereSky(page)).toEqual(initial);
+  await page.locator('[data-heliosphere-layer="labels"]').uncheck();
+  await renderedFrames(page);
+  await expect(page.locator('#heliosphere-regions button')).toHaveCount(5);
+  await page.locator('#heliosphere-regions button').first().focus();
+  await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+  const focused = page.locator('#heliosphere-regions button').nth(1);
+  await expect(focused).toBeFocused();
+  expect(await focused.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#planet-name')).toHaveText('Termination shock');
+  await captureHeliosphere(page, testInfo, 'sky-desktop-labels-off-focus');
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Visual quality').selectOption('low');
+  await page.getByRole('button', { name: 'Close options' }).click();
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(280);
+  await captureHeliosphere(page, testInfo, 'sky-desktop-low');
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Visual quality').selectOption('high');
+  await page.getByRole('button', { name: 'Close options' }).click();
+  // Resize at fixed DPR, preserving the live session and quality preference.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(405);
+  await page.locator('[data-heliosphere-layer="labels"]').check();
+  await page.locator('#close-planet').click();
+  await page.locator('#heliosphere-reset-camera').click();
+  await settledBoundingBox(page.locator('[data-body="earth"]'));
+  const phoneSummary = page.locator('#heliosphere-sheet > summary');
+  await phoneSummary.click();
+  await expect(page.locator('#heliosphere-sheet')).not.toHaveAttribute('open');
+  await renderedFrames(page);
+  await captureHeliosphere(page, testInfo, 'sky-phone-high-overview');
+  await phoneSummary.click();
+  await page.locator('[data-region="heliopause"]').click();
+  await expect(page.locator('#planet-name')).toHaveText('Heliopause');
+  await expect(page.locator('#heliosphere-regions button')).toHaveCount(5);
+  await expect(page.locator('[data-heliosphere-layer="labels"]')).toBeEnabled();
+  await page.locator('#planet-name').scrollIntoViewIfNeeded();
+  await renderedFrames(page);
+  await captureHeliosphere(page, testInfo, 'sky-phone-region-card');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(900);
+  await page.getByRole('button', { name: 'Explain this view' }).click();
+  await expect(page.getByText(/The faint Milky Way band and distant stars are decorative artwork/)).toBeVisible();
+  await expect(page.getByText(/Tail orientation is illustrative and is not inferred/)).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('Heliosphere static sky stays behind max-zoom panned views and reuses resources across sessions', async ({ page }, testInfo) => {
+  const errors = collectRenderErrors(page);
+  await observeHeliosphereRender(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('./?view=sun');
+  await page.locator('#enter-heliosphere').click();
+  await renderedFrames(page);
+  const initial = await heliosphereSky(page);
+  expect(initial.visible).toBe(true);
+  await page.locator('[data-camera-navigation="orbit-left"]').click();
+  await settledBoundingBox(page.locator('[data-body="earth"]'));
+  const navigated = await heliosphereSky(page);
+  expect(navigated.direction).not.toEqual(initial.direction);
+  expect(navigated.transform.slice(0, 12)).toEqual(initial.transform.slice(0, 12));
+  expect(navigated.transform.slice(12, 15)).toEqual(navigated.camera);
+  expect(navigated.positions).toEqual(initial.positions);
+  expect(navigated.children).toEqual(initial.children);
+  expect(navigated.starMaterial).toEqual(initial.starMaterial);
+  for (let step = 0; step < 12; step += 1) await page.locator('[data-camera-navigation="zoom-out"]').click();
+  await page.locator('[data-camera-navigation="pan-right"]').click();
+  await renderedFrames(page);
+  const outer = await heliosphereSky(page);
+  expect(outer.cameraDistance).toBeCloseTo(2500, 5);
+  expect(outer.transform.slice(12, 15)).toEqual(outer.camera);
+  expect(outer.positions).toEqual(initial.positions);
+  expect(outer.children).toEqual(initial.children);
+  expect(outer.starMaterial).toEqual(initial.starMaterial);
+  await captureHeliosphere(page, testInfo, 'sky-max-zoom-panned');
+  await page.locator('#leave-heliosphere').click();
+  await expect.poll(async () => (await heliosphereSky(page)).visible).toBe(false);
+  await page.locator('#enter-heliosphere').click();
+  await renderedFrames(page);
+  expect((await heliosphereSky(page)).ids).toEqual(initial.ids);
+  expect(errors).toEqual([]);
+});
+
+test('Heliosphere static sky freezes during reduced-motion planetary playback', async ({ page }) => {
+  const errors = collectRenderErrors(page);
+  await observeHeliosphereRender(page);
+  await page.goto('./?view=sun');
+  await page.locator('#enter-heliosphere').click();
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Reduce motion').check();
+  await expect(page.getByLabel('Reduce motion')).toBeChecked();
+  await page.getByRole('button', { name: 'Close options' }).click();
+  await page.getByLabel('Speed', { exact: true }).selectOption('year');
+  await renderedFrames(page);
+  const sky = await heliosphereSky(page);
+  const before = await heliosphereRender(page);
+  await page.locator('#play-toggle').click();
+  await expect.poll(async () => (await heliosphereRender(page)).simulationTimeMs).toBeGreaterThan(before.simulationTimeMs);
+  await renderedFrames(page, 8);
+  const after = await heliosphereRender(page);
+  expect(after.positions).not.toEqual(before.positions);
+  expect(after.phase).toBe(before.phase);
+  expect(await heliosphereSky(page)).toEqual(sky);
+  expect(await page.evaluate(() => (window as unknown as { __heliospherePlayback: { reducedMotion: boolean } }).__heliospherePlayback.reducedMotion)).toBe(true);
+  await page.locator('#play-toggle').click();
+  await renderedFrames(page);
+  expect(await heliosphereSky(page)).toEqual(sky);
+  expect(errors).toEqual([]);
+});
+
+test('Heliosphere static sky phone low quality keeps Labels-off card and keyboard focus readable', async ({ page, browserName }, testInfo) => {
+  const errors = collectRenderErrors(page);
+  await observeHeliosphereRender(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('./?view=sun');
+  await page.getByRole('button', { name: 'View options' }).click();
+  await page.getByLabel('Visual quality').selectOption('low');
+  await page.getByRole('button', { name: 'Close options' }).click();
+  await page.locator('#enter-heliosphere').click();
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(126);
+  await page.locator('#heliosphere-sheet > summary').click();
+  await renderedFrames(page);
+  await captureHeliosphere(page, testInfo, 'sky-phone-low-overview');
+  await page.locator('#heliosphere-sheet > summary').click();
+  await page.locator('[data-heliosphere-layer="labels"]').uncheck();
+  await page.locator('#heliosphere-regions button').first().focus();
+  await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
+  const focused = page.locator('#heliosphere-regions button').nth(1);
+  await expect(focused).toBeFocused();
+  expect(await focused.evaluate((el) => el.matches(':focus-visible'))).toBe(true);
+  await captureHeliosphere(page, testInfo, 'sky-phone-low-labels-off-focus');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#planet-name')).toHaveText('Termination shock');
+  await expect(page.locator('#heliosphere-regions button')).toHaveCount(5);
+  await expect(page.locator('[data-heliosphere-layer="labels"]')).not.toBeChecked();
+  await page.locator('#planet-name').scrollIntoViewIfNeeded();
+  await renderedFrames(page);
+  await captureHeliosphere(page, testInfo, 'sky-phone-low-labels-off-card');
+  expect(errors).toEqual([]);
+});
 
 test('Heliosphere actual flow, shimmer, Sun and spin share retained motion through playback lifecycle', async ({ page }, testInfo) => {
   await observeHeliosphereRender(page);
