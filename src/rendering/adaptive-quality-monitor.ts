@@ -7,6 +7,7 @@ export class AdaptiveQualityMonitor {
   private adapted = false;
 
   sample(preference: QualityPreference, nowMs: number): QualityTier | null {
+    if (!Number.isFinite(nowMs)) return null;
     const delta = nowMs - this.lastFrameAt;
     this.lastFrameAt = nowMs;
     if (delta <= 0 || delta > 500) return null;

@@ -312,6 +312,7 @@ export class OrbitalScene {
   }
 
   dispose(): void {
+    this.galaxyPresentation.dispose();
     this.heliosphereBackground.dispose();
     this.gravityPresentation.dispose();
     this.heliospherePresentation.dispose();

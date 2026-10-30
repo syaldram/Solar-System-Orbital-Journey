@@ -717,3 +717,19 @@ it('advances the final permitted endpoint fraction then retains the phase withou
   expect(state.presentation.kind === 'heliosphere' && state.presentation.phaseSeconds).toBe(0.25);
   expect(updateExperience(state, { type: 'advance', realSeconds: 100 })).toBe(state);
 });
+
+it('retains nonzero inactive Galactic progress and speed through Heliosphere playback and Back', () => {
+  let state = createInitialExperienceState(TODAY);
+  state = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
+  state = updateExperience(state, { type: 'scrub-galactic', elapsedMillionYears: 42 });
+  state = updateExperience(state, { type: 'set-galactic-speed', speed: 25 });
+  state = updateExperience(state, { type: 'set-frame', frame: 'space' });
+  state = updateExperience(state, { type: 'enter-heliosphere' });
+  state = updateExperience(state, { type: 'play' });
+  state = updateExperience(state, { type: 'advance', realSeconds: 5 });
+  state = updateExperience(state, { type: 'leave-heliosphere' });
+  state = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
+  expect(state.galacticElapsedMillionYears).toBe(42);
+  expect(state.galacticSpeed).toBe(25);
+  expect(state.isPlaying).toBe(false);
+});

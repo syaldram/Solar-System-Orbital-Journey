@@ -19,23 +19,17 @@ import {
   type ExperienceState,
 } from './experience/experience-state';
 import { applyCurrentTourChapter } from './experience/tour';
+import { parsePreferences, type SavedPreferences } from './interface/preferences';
 import { AppInterface } from './interface/app-interface';
 import { decodeSharedView, encodeSharedView } from './interface/url-state';
 import { OrbitalScene } from './rendering/orbital-scene';
 
 const PREFERENCES_KEY = 'orbital-journey:preferences:v1';
 
-interface SavedPreferences {
-  readonly reducedMotion?: boolean;
-  readonly quality?: ExperienceState['quality'];
-  readonly labels?: boolean;
-  readonly trails?: boolean;
-}
-
 function readPreferences(): SavedPreferences {
   try {
     const stored = window.localStorage.getItem(PREFERENCES_KEY);
-    return stored ? (JSON.parse(stored) as SavedPreferences) : {};
+    return stored ? parsePreferences(JSON.parse(stored)) : {};
   } catch {
     return {};
   }
@@ -92,8 +86,9 @@ function createOrbitPaths(instant: Date): Readonly<Record<PlanetId, readonly Vec
 }
 
 const initialToday = new Date();
-let state = applyPreferences(createInitialExperienceState(initialToday), readPreferences());
-if (window.matchMedia('(prefers-reduced-motion: reduce)').matches && !readPreferences().reducedMotion) {
+const preferences = readPreferences();
+let state = applyPreferences(createInitialExperienceState(initialToday), preferences);
+if (window.matchMedia('(prefers-reduced-motion: reduce)').matches && preferences.reducedMotion === undefined) {
   state = updateExperience(state, { type: 'set-reduced-motion', enabled: true });
 }
 

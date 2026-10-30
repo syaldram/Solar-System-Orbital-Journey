@@ -1,0 +1,117 @@
+{
+  "recordedAt": "2026-10-30T14:56:33.604Z",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "25.6.0",
+    "cpu": "Apple M4 Pro",
+    "memoryGiB": 48,
+    "hostnameRecorded": false
+  },
+  "browser": "156.0.8078.74",
+  "channel": "chrome",
+  "headless": true,
+  "graphics": {
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+    "vendor": "Google Inc. (Apple)",
+    "dpr": 2
+  },
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "requestedDpr": 2,
+  "canvasBacking": {
+    "width": 2880,
+    "height": 1800,
+    "cssWidth": 1440,
+    "cssHeight": 900,
+    "ratioX": 2,
+    "ratioY": 2
+  },
+  "requestedQuality": "auto",
+  "endingQualityPreference": "auto",
+  "resolvedQualityTier": "high",
+  "workload": "Requested Heliosphere overview with all layers and planetary/decorative playback; raw workloadChecks determine observation validity",
+  "workloadChecks": {
+    "beforeObservation": {
+      "visibilityState": "visible",
+      "playing": "true",
+      "date": "Aug 29, 2027",
+      "reducedMotion": false,
+      "layers": {
+        "outerHeliosphere": true,
+        "terminationShock": true,
+        "orbitPaths": true,
+        "labels": true
+      },
+      "contextLost": false
+    },
+    "afterObservation": {
+      "visibilityState": "visible",
+      "playing": "true",
+      "date": "Mar 02, 2030",
+      "reducedMotion": false,
+      "layers": {
+        "outerHeliosphere": true,
+        "terminationShock": true,
+        "orbitPaths": true,
+        "labels": true
+      },
+      "contextLost": false
+    },
+    "dateAdvanced": true,
+    "valid": false
+  },
+  "warmupMs": 10000,
+  "requestedDurationMs": 30000,
+  "actualDurationMs": 30015.499999999996,
+  "method": "Uncontended browser requestAnimationFrame intervals; no app instrumentation. Distribution includes stalls.",
+  "samples": 1801,
+  "averageFps": 60.00233212840033,
+  "frameMs": {
+    "p50": 16.69999999999709,
+    "p95": 16.700000000004366,
+    "p99": 16.80000000000291,
+    "max": 16.80000000000291
+  },
+  "oneSecondWindowFps": {
+    "min": 60,
+    "max": 60.00983767830792,
+    "values": [
+      60.00393468424168,
+      60,
+      60.00393468424157,
+      60.00393468424157,
+      60.00393468424168,
+      60,
+      60.00393468424146,
+      60,
+      60.00393468424168,
+      60,
+      60,
+      60.00983767830792,
+      60,
+      60,
+      60.00393468424146,
+      60.00393468424168,
+      60,
+      60.00393468424168,
+      60,
+      60.00393468424168,
+      60.003934684241244,
+      60,
+      60,
+      60.00393468424168,
+      60.00393468424168,
+      60,
+      60.00393468424168,
+      60.00393468424168,
+      60
+    ]
+  },
+  "errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "limitations": "Local automated laptop RAF observation; not physical phone FPS, manual Safari, remote CI or deployed-site evidence."
+}

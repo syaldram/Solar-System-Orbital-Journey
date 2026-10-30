@@ -39,11 +39,26 @@ export interface OrbitalModelSource {
   readonly validThrough: 'AD 3000';
 }
 
-const JULIAN_DATE_UNIX_EPOCH = 2_440_587.5;
-const JULIAN_DATE_J2000 = 2_451_545;
-const DAYS_PER_JULIAN_CENTURY = 36_525;
-const MILLISECONDS_PER_DAY = 86_400_000;
-const ASTRONOMICAL_UNIT_KM = 149_597_870.7;
+interface SourcedConversion<Unit extends string> {
+  readonly value: number;
+  readonly unit: Unit;
+  readonly source: { readonly organization: string; readonly url: string; readonly retrievedAt: string };
+}
+const JPL_CONVERSIONS = { organization: 'NASA/JPL', url: 'https://ssd.jpl.nasa.gov/astro_par.html', retrievedAt: '2026-10-30' } as const;
+export const SCIENTIFIC_CONVERSIONS = {
+  unixEpoch: { value: 2_440_587.5, unit: 'Julian date', source: { organization: 'NASA/JPL', url: 'https://ssd-api.jpl.nasa.gov/jd_cal.api?cd=1970-01-01', retrievedAt: '2026-10-30' } } satisfies SourcedConversion<'Julian date'>,
+  j2000: { value: 2_451_545, unit: 'Julian date', source: { organization: 'NASA/JPL', url: 'https://ssd.jpl.nasa.gov/planets/approx_pos.html', retrievedAt: '2026-10-30' } } satisfies SourcedConversion<'Julian date'>,
+  julianCentury: { value: 36_525, unit: 'days', source: JPL_CONVERSIONS } satisfies SourcedConversion<'days'>,
+  julianYear: { value: 365.25, unit: 'days', source: JPL_CONVERSIONS } satisfies SourcedConversion<'days'>,
+  day: { value: 86_400, unit: 'seconds', source: JPL_CONVERSIONS } satisfies SourcedConversion<'seconds'>,
+  millisecondsPerDay: { value: 86_400_000, unit: 'milliseconds', source: { organization: 'Ecma International', url: 'https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-time-related-constants', retrievedAt: '2026-10-30' } } satisfies SourcedConversion<'milliseconds'>,
+  astronomicalUnit: { value: 149_597_870.7, unit: 'km', source: JPL_CONVERSIONS } satisfies SourcedConversion<'km'>,
+} as const;
+const JULIAN_DATE_UNIX_EPOCH = SCIENTIFIC_CONVERSIONS.unixEpoch.value;
+const JULIAN_DATE_J2000 = SCIENTIFIC_CONVERSIONS.j2000.value;
+const DAYS_PER_JULIAN_CENTURY = SCIENTIFIC_CONVERSIONS.julianCentury.value;
+const MILLISECONDS_PER_DAY = SCIENTIFIC_CONVERSIONS.millisecondsPerDay.value;
+const ASTRONOMICAL_UNIT_KM = SCIENTIFIC_CONVERSIONS.astronomicalUnit.value;
 
 export const JPL_APPROXIMATE_ORBIT_SOURCE: OrbitalModelSource = {
   organization: 'NASA/JPL',
@@ -53,11 +68,11 @@ export const JPL_APPROXIMATE_ORBIT_SOURCE: OrbitalModelSource = {
   validThrough: 'AD 3000',
 };
 
-const ORBITAL_ELEMENT_UNITS = {
+export const ORBITAL_ELEMENT_UNITS = {
   semiMajorAxis: 'au and au/Julian-century',
   eccentricity: 'dimensionless and dimensionless/Julian-century',
   angles: 'degrees and degrees/Julian-century',
-  periodicCorrection: 'degrees',
+  periodicCorrection: { b: 'degrees/Julian-century²', c: 'degrees', s: 'degrees', f: 'degrees/Julian-century' },
 } as const;
 
 const JPL_ORBITAL_METADATA = {

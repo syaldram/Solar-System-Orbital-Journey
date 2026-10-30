@@ -435,11 +435,16 @@ async function captureHeliosphere(page: Page, info: TestInfo, name: string): Pro
 
 test('Heliosphere delayed RAF charges only permitted wall intervals and never catches up hidden time', async ({ page }) => {
   await observeHeliosphereRender(page);
-  await page.clock.install();
+  const epoch = new Date('2026-10-30T00:00:00Z');
+  await page.clock.install({ time: epoch });
+  // Pause before application timers exist. The fixed future target avoids a
+  // running Date.now() roundtrip becoming stale under concurrent browser load.
+  await page.clock.pauseAt(new Date(epoch.getTime() + 3600000));
   await page.goto('./?view=sun&body=earth');
-  await page.locator('#enter-heliosphere').click();
-  await renderedFrames(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+  // A paused clock cannot satisfy actionability's RAF stability wait; invoke
+  // the same native handler, then explicitly deliver the initial render frames.
+  await page.locator('#enter-heliosphere').evaluate((element) => (element as HTMLElement).click());
+  await page.clock.runFor(64);
   // Hold browser RAF dispatch, keeping the real app callback and real input
   // handlers. Wall time advances independently; each frame explicitly delivers
   // those callbacks with the current performance time.
@@ -1978,4 +1983,39 @@ test.describe('Heliosphere native touch controls', () => {
     await page.locator('#heliosphere-sheet > summary').tap();
     await expect(page.locator('#heliosphere-sheet')).toHaveAttribute('open');
   });
+});
+
+test('automatic poor-frame adaptation reaches actual renderer and retains phase mapping and semantic region access', async ({ page }) => {
+  await observeHeliosphereRender(page);
+  await page.route('**/src/rendering/adaptive-quality-monitor.ts*', async (route) => {
+    const response = await route.fetch();
+    // Supply controlled poor frame times to the original monitor policy; real
+    // scene callback, main dispatch and quality renderer remain in the path.
+    await route.fulfill({ response, body: `${await response.text()}
+const sampleOriginal = AdaptiveQualityMonitor.prototype.sample;
+let sampledAt = performance.now();
+AdaptiveQualityMonitor.prototype.sample = function(preference, now) {
+  return sampleOriginal.call(this, preference, window.__slowFrames ? (sampledAt += 30) : now);
+};` });
+  });
+  await page.goto('./?view=sun&body=earth');
+  await page.locator('#enter-heliosphere').click();
+  await page.locator('#play-toggle').click();
+  await expect.poll(async () => (await heliosphereRender(page)).phase).toBeGreaterThan(.2);
+  await page.locator('#play-toggle').click();
+  await renderedFrames(page);
+  const before = await heliosphereRender(page);
+  expect(before.phase).toBeGreaterThan(.2);
+  await page.evaluate(() => { (window as unknown as { __slowFrames: boolean }).__slowFrames = true; });
+  await expect(page.locator('#quality-select')).toHaveValue('balanced', { timeout: 20000 });
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(550);
+  const after = await heliosphereRender(page);
+  expect(after.positions).toEqual(before.positions);
+  expect(after.phase).toBe(before.phase);
+  expect(after.boundaryScale).toBe(before.boundaryScale);
+  await expect(page.locator('#heliosphere-regions button')).toHaveCount(5);
+  for (const button of await page.locator('#heliosphere-regions button').all()) {
+    await button.click();
+    await expect(page.locator('#planet-name')).toHaveText(await button.textContent() ?? '');
+  }
 });
