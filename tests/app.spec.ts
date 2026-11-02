@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 
 interface HeliosphereRenderSample {
   phase: number;
@@ -10,6 +11,8 @@ interface HeliosphereRenderSample {
   solarTime: number;
   spin: number;
   positions: number[][];
+  travel: number[];
+  regions: { offset: number[]; opacity: number }[];
 }
 
 // Inspect the actual production render boundary only inside the browser test.
@@ -51,6 +54,9 @@ OrbitalScene.prototype.render = function(state, now) {
   const sky = this.heliosphereBackground.root;
   const stars = sky.getObjectByName('heliosphere-distant-stars');
   const band = sky.getObjectByName('heliosphere-milky-way-band');
+  const travel = this.heliosphereTravel.root;
+  const guides = travel.getObjectByName('heliosphere-travel-guides');
+  window.__heliosphereTravel = { visible: travel.visible, ids: [travel.uuid, guides.geometry.uuid, guides.material.uuid], count: guides.geometry.drawRange.count };
   window.__heliosphereSky = {
     visible: sky.visible,
     ids: [sky.uuid, band.geometry.uuid, band.material.uuid, stars.geometry.uuid, stars.material.uuid],
@@ -78,6 +84,8 @@ OrbitalScene.prototype.render = function(state, now) {
     solarTime: sun.material.uniforms.time.value,
     spin: this.planetMeshes.get('earth').rotation.y,
     positions: Array.from(this.planetTiltGroups.values()).map(object => object.position.toArray()),
+    travel: Array.from(guides.geometry.getAttribute('position').array),
+    regions: presentation.drawables.filter(({ object }) => object.material.uniforms).map(({ object }) => ({ offset: object.material.uniforms.textureOffset.value.toArray(), opacity: object.material.opacity })),
   };
   window.__heliospherePlayback = { playing: state.pathMotion.isPlaying, reducedMotion: state.reducedMotion, hidden: document.hidden, now };
   const earth = this.planetTiltGroups.get('earth');
@@ -439,6 +447,174 @@ async function captureHeliosphere(page: Page, info: TestInfo, name: string): Pro
   await info.attach(`${name} (${info.project.name})`, { path, contentType: 'image/png' });
 }
 
+test('Heliosphere five region materials change GPU pixels when only texture offset changes', async ({ page }, info) => {
+  const errors = collectRenderErrors(page);
+  await page.route('**/src/rendering/orbital-scene.ts*', async (route) => {
+    const response = await route.fetch();
+    // Use the actual production geometry, materials and renderer in an isolated
+    // render target. This test-only instrumentation never enters the shipped app.
+    await route.fulfill({ response, body: `${await response.text()}
+const renderOriginal = OrbitalScene.prototype.render;
+OrbitalScene.prototype.render = function(state, now) {
+  renderOriginal.call(this, state, now);
+  if (!state.heliosphere || window.__regionGpuDrift) return;
+  const size = 192;
+  const target = new THREE.WebGLRenderTarget(size, size);
+  const previousTarget = this.renderer.getRenderTarget();
+  const camera = new THREE.PerspectiveCamera(50, 1, 1, 2500);
+  camera.position.set(70, 220, 800);
+  camera.lookAt(-100, 0, 0);
+  const results = [];
+  try {
+    for (const { object, region } of this.heliospherePresentation.drawables) {
+      if (!(object instanceof THREE.Mesh)) continue;
+      const material = object.material;
+      const offset = material.uniforms.textureOffset.value;
+      const savedOffset = offset.clone();
+      const scene = new THREE.Scene();
+      // Same production geometry/material; no geometry or shader substitutions.
+      const mesh = new THREE.Mesh(object.geometry, material);
+      scene.add(mesh);
+      const fixed = () => JSON.stringify({ phase: material.uniforms.phase.value,
+        opacity: material.opacity, envelopeOpacity: material.uniforms.envelopeOpacity.value,
+        geometry: mesh.geometry.uuid, model: mesh.matrixWorld.toArray(), camera: camera.matrixWorld.toArray() });
+      const pixels = () => {
+        this.renderer.setRenderTarget(target);
+        this.renderer.clear();
+        this.renderer.render(scene, camera);
+        const buffer = new Uint8Array(size * size * 4);
+        this.renderer.readRenderTargetPixels(target, 0, 0, size, size, buffer);
+        return buffer;
+      };
+      try {
+        offset.set(0, 0, 0);
+        const before = pixels();
+        const fixedBefore = fixed();
+        const repeated = pixels();
+        offset.copy(material.uniforms.drift.value).multiplyScalar(20);
+        const after = pixels();
+        let changedPixels = 0;
+        let repeatedChanges = 0;
+        for (let index = 0; index < before.length; index += 4) {
+          if (before[index] !== after[index] || before[index + 1] !== after[index + 1] || before[index + 2] !== after[index + 2]) changedPixels++;
+          if (before[index] !== repeated[index] || before[index + 1] !== repeated[index + 1] || before[index + 2] !== repeated[index + 2]) repeatedChanges++;
+        }
+        results.push({ region, changedPixels, repeatedChanges, fixedBefore, fixedAfter: fixed() });
+      } finally {
+        offset.copy(savedOffset);
+      }
+    }
+    window.__regionGpuDrift = results;
+  } finally {
+    this.renderer.setRenderTarget(previousTarget);
+    target.dispose();
+  }
+};` });
+  });
+  await page.goto('./?view=sun');
+  await page.locator('#enter-heliosphere').click();
+  await expect.poll(() => page.evaluate(() => Boolean((window as unknown as { __regionGpuDrift?: unknown }).__regionGpuDrift))).toBe(true);
+  const results = await page.evaluate(() => (window as unknown as { __regionGpuDrift: { region: string; changedPixels: number; repeatedChanges: number; fixedBefore: string; fixedAfter: string }[] }).__regionGpuDrift);
+  expect(results.map(({ region }) => region).sort()).toEqual(['heliopause', 'heliosheath', 'interstellar-space', 'solar-wind', 'termination-shock']);
+  for (const result of results) {
+    expect(result.repeatedChanges, `${result.region}: identical samples must render identically`).toBe(0);
+    expect(result.fixedAfter, `${result.region}: phase, opacity, geometry and camera stay fixed`).toBe(result.fixedBefore);
+    expect(result.changedPixels, `${result.region}: shader must consume textureOffset`).toBeGreaterThan(25);
+  }
+  expect(errors).toEqual([]);
+  await info.attach('region-gpu-drift', { body: JSON.stringify(results, null, 2), contentType: 'application/json' });
+});
+
+test.describe('Heliosphere tracking travel evidence', () => {
+  for (const [view, width, height, layout] of [['sun', 1280, 720, 'desktop'], ['space', 390, 844, 'phone']] as const) {
+    test(`travels from ${view} with retained controls on ${layout}`, async ({ page }, info) => {
+      const errors = collectRenderErrors(page);
+      await observeHeliosphereRender(page);
+      await page.setViewportSize({ width, height });
+      const epoch = new Date('2026-11-02T00:00:00Z');
+      await page.clock.install({ time: epoch });
+      await page.clock.pauseAt(new Date(epoch.getTime() + 3600000));
+      await page.goto(`./?view=${view}&body=earth`);
+      await page.clock.runFor(1200);
+      // A stopped clock cannot satisfy pointer actionability's RAF stability
+      // wait. Invoke the real controls' native handlers, then deliver frames.
+      const click = (selector: string) => page.locator(selector).evaluate((element) => (element as HTMLElement).click());
+      const scientificCamera = (await heliosphereSky(page)).camera;
+      await click('#enter-heliosphere');
+      await page.clock.runFor(1200);
+      await expect(page.locator('#play-toggle')).toHaveAttribute('aria-pressed', 'false');
+      await click('#close-planet');
+      if (layout === 'phone') await click('#heliosphere-sheet > summary');
+      await page.clock.runFor(64);
+      const sequence: { stage: string; file: string; phaseSeconds: number; simulationTimeMs: number; playing: boolean; camera: number[]; direction: number[] }[] = [];
+      const captureFrame = async (stage: string) => {
+        const sample = await heliosphereRender(page);
+        const sky = await heliosphereSky(page);
+        const playing = await page.locator('#play-toggle').getAttribute('aria-pressed') === 'true';
+        const name = `travel-${layout}-${stage}`;
+        await captureHeliosphere(page, info, name);
+        // The clock stays stopped during capture: metadata describes these exact pixels.
+        expect(await heliosphereRender(page)).toEqual(sample);
+        sequence.push({ stage, file: `${name}-${info.project.name}.png`, phaseSeconds: sample.phase,
+          simulationTimeMs: sample.simulationTimeMs, playing, camera: sky.camera, direction: sky.direction });
+        return sample;
+      };
+      const first = await captureFrame('before');
+      const camera = await heliosphereSky(page);
+      await click('#play-toggle');
+      await page.clock.runFor(3040);
+      const moving = await captureFrame('moving');
+      expect(moving.phase).toBeGreaterThan(first.phase + 3);
+      expect(moving.travel).not.toEqual(first.travel);
+      for (const [index, region] of moving.regions.entries()) expect(region.offset).not.toEqual(first.regions[index]?.offset);
+      expect(new Set(moving.regions.map((region) => JSON.stringify(region.offset))).size).toBe(5);
+      const tracking = await heliosphereSky(page);
+      expect(tracking.camera).toEqual(camera.camera);
+      expect(tracking.direction).toEqual(camera.direction);
+      expect(tracking.positions).toEqual(camera.positions);
+      await click('#play-toggle');
+      await page.clock.runFor(64);
+      const paused = await captureFrame('paused');
+      await page.clock.runFor(1000);
+      expect(await heliosphereRender(page)).toEqual(paused);
+      await click('[data-camera-navigation="orbit-left"]');
+      await page.clock.runFor(64);
+      expect(await heliosphereRender(page)).toEqual(paused);
+      const inspected = await heliosphereSky(page);
+      expect(Math.hypot(...inspected.direction.map((value, index) => value - (camera.direction[index] ?? 0)))).toBeGreaterThan(.01);
+      await captureHeliosphere(page, info, `travel-${layout}-inspection`);
+      await click('#play-toggle');
+      await page.clock.runFor(2000);
+      const resumed = await captureFrame('resumed');
+      expect(resumed.phase).toBeGreaterThan(paused.phase + 1.9);
+      expect(resumed.travel).not.toEqual(paused.travel);
+      (await heliosphereSky(page)).direction.forEach((value, index) => expect(value).toBeCloseTo(inspected.direction[index] ?? 0, 10));
+      await click('#play-toggle');
+      await page.clock.runFor(64);
+      const beforeReset = await heliosphereRender(page);
+      await click('#heliosphere-reset-camera');
+      await page.clock.runFor(64);
+      expect(await heliosphereRender(page)).toEqual(beforeReset);
+      const reset = await heliosphereSky(page);
+      reset.camera.forEach((value, index) => expect(value).toBeCloseTo(camera.camera[index] ?? 0, 10));
+      reset.direction.forEach((value, index) => expect(value).toBeCloseTo(camera.direction[index] ?? 0, 10));
+      if (layout === 'phone') await click('#heliosphere-sheet > summary');
+      await click('[data-region="heliopause"]');
+      await expect(page.locator('#planet-name')).toHaveText('Heliopause');
+      await click('#leave-heliosphere');
+      await page.clock.runFor(64);
+      await expect(page.locator('#play-toggle')).toHaveAttribute('aria-pressed', 'false');
+      expect((await heliosphereSky(page)).camera).toEqual(scientificCamera);
+      expect(await page.evaluate(() => (window as unknown as { __heliosphereTravel: { visible: boolean } }).__heliosphereTravel.visible)).toBe(false);
+      expect(errors).toEqual([]);
+      const metadataPath = info.outputPath(`travel-${layout}-sequence.json`);
+      await writeFile(metadataPath, JSON.stringify({ browser: info.project.name, viewport: { width, height }, entryView: view, sequence }, null, 2));
+      await info.attach('travel-frame-sequence', { path: metadataPath, contentType: 'application/json' });
+      await info.attach('travel-render-samples', { body: JSON.stringify({ first, moving, paused, resumed }), contentType: 'application/json' });
+    });
+  }
+});
+
 test('Heliosphere delayed RAF charges only permitted wall intervals and never catches up hidden time', async ({ page }) => {
   await observeHeliosphereRender(page);
   const epoch = new Date('2026-10-30T00:00:00Z');
@@ -500,7 +676,7 @@ test('Heliosphere delayed RAF charges only permitted wall intervals and never ca
     const after = await frame();
     expect(after.phase - before.phase).toBeCloseTo(1, 8);
     expect(after.boundaryScale).toBeCloseTo(1 + .02 * Math.sin(after.phase * Math.PI / 10), 10);
-    expect(after.shimmer).toBeCloseTo(.58 * (1 + .07 * Math.sin(after.phase * .8)), 10);
+    expect(after.shimmer).toBeCloseTo(.58 * (1 + .07 * Math.sin(after.phase * .67)), 10);
     // First visible flow particle moves radially at two scene units per second.
     const radius = (sample: HeliosphereRenderSample) => Math.hypot(sample.flow[0] ?? 0, (sample.flow[1] ?? 0) / .85, sample.flow[2] ?? 0);
     expect(radius(after) - radius(before)).toBeCloseTo(2, 5);

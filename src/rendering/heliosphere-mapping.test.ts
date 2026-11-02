@@ -84,8 +84,9 @@ it('samples actual nested geometry, flow and shimmer through a complete 20-secon
     for (const { object, material, baseOpacity } of clouds) {
       expect(object.material).toBe(material);
       expect(material.uniforms.phase?.value).toBe(phase);
-      expect(material.opacity).toBeCloseTo(baseOpacity * (1 + 0.07 * Math.sin(phase * 0.8)), 12);
+      expect(material.opacity).toBeCloseTo(baseOpacity * (1 + 0.07 * Math.sin(phase * Number(material.uniforms.shimmerRate?.value))), 12);
       expect(material.uniforms.envelopeOpacity?.value).toBe(material.opacity);
+      expect((material.uniforms.textureOffset?.value as THREE.Vector3 | undefined)?.toArray()).toEqual((material.uniforms.drift?.value as THREE.Vector3 | undefined)?.clone().multiplyScalar(phase).toArray());
     }
   };
   for (const [phase, scale] of [[0, 1], [5, 1.02], [10, 1], [15, .98], [20, 1]] as const) {
@@ -100,6 +101,9 @@ it('samples actual nested geometry, flow and shimmer through a complete 20-secon
     expect(middle.containsBox(inner)).toBe(true);
   }
   presentation.render(1);
+  expect(new Set(clouds.map(({ material }) => material.uniforms.regionKind?.value)).size).toBe(5);
+  expect(new Set(clouds.map(({ material }) => JSON.stringify(material.uniforms.textureOffset?.value.toArray()))).size).toBe(5);
+  expect(new Set(clouds.map(({ material }) => material.opacity)).size).toBe(5);
   expect(Math.hypot(positions.getX(0), positions.getY(0) / .85, positions.getZ(0))).toBeCloseTo(initialRadius + 2, 5);
   expectCloudPhase(1);
   const snapshot = Array.from(positions.array);

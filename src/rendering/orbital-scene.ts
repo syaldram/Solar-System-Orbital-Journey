@@ -38,6 +38,7 @@ import { GravityPresentation } from './gravity-presentation';
 import { compressGravityPosition, gravityCenters, gravityBodyPosition, gravityBodyRadius, gravitySurfaceHeight, GRAVITY_SUN_RADIUS } from './gravity-mapping';
 import { HeliospherePresentation, heliosphereHitStrength } from './heliosphere-presentation';
 import { HeliosphereBackground } from './heliosphere-background';
+import { HeliosphereTravelPresentation } from './heliosphere-travel-presentation';
 import { mapHeliospherePosition, heliosphereBodyRadius, HELIOSPHERE_SUN_RADIUS } from './heliosphere-mapping';
 import type { CameraNavigation } from './scene-camera-controller';
 import { SolarPresentation } from './solar-presentation';
@@ -86,6 +87,7 @@ function toSceneVector(position: Vector3Au, scale = AU_SCALE): THREE.Vector3 {
 
 export class OrbitalScene {
   private readonly heliosphereBackground = new HeliosphereBackground();
+  private readonly heliosphereTravel = new HeliosphereTravelPresentation();
   private readonly heliospherePresentation = new HeliospherePresentation();
   private readonly heliosphereOrbitLines = new Map<PlanetId, THREE.Line>();
   private readonly heliosphereSpinOffsets = new Map<PlanetId, number>();
@@ -144,7 +146,7 @@ export class OrbitalScene {
 
     this.galaxyPresentation = new GalaxyPresentation();
     this.pathGuidePresentation = new PathGuidePresentation(options.labelLayer);
-    this.scene.add(this.heliosphereBackground.root, this.heliospherePresentation.root, this.gravityPresentation.root, this.solarGroup, this.pathGuidePresentation.root, this.galaxyPresentation.root);
+    this.scene.add(this.heliosphereBackground.root, this.heliosphereTravel.root, this.heliospherePresentation.root, this.gravityPresentation.root, this.solarGroup, this.pathGuidePresentation.root, this.galaxyPresentation.root);
     this.starField = this.createStarField();
     this.scene.add(this.starField);
 
@@ -249,7 +251,10 @@ export class OrbitalScene {
     if (!state.heliosphere || !state.rotationStabilized) this.heliosphereSpinActive = false;
     this.applyView(state);
     this.heliosphereSpinActive = state.heliosphere && state.rotationStabilized;
-    if (state.heliosphere) this.heliospherePresentation.render(state.heliospherePhaseSeconds ?? 0);
+    if (state.heliosphere) {
+      this.heliospherePresentation.render(state.heliospherePhaseSeconds ?? 0);
+      this.heliosphereTravel.render(state.heliospherePhaseSeconds ?? 0);
+    }
     this.cameraController.render(state, nowMs);
     this.heliosphereBackground.placeAroundCamera(this.camera.position);
     this.pathGuidePresentation.render({
@@ -314,6 +319,7 @@ export class OrbitalScene {
   dispose(): void {
     this.galaxyPresentation.dispose();
     this.heliosphereBackground.dispose();
+    this.heliosphereTravel.dispose();
     this.gravityPresentation.dispose();
     this.heliospherePresentation.dispose();
     this.cameraController.controls.dispose();
@@ -523,6 +529,7 @@ export class OrbitalScene {
     const isFullJourney = !(state.gravity || state.heliosphere) && state.frame === 'space' && state.bookmark === 'full';
     this.heliospherePresentation.root.visible = state.heliosphere;
     this.heliosphereBackground.root.visible = state.heliosphere;
+    this.heliosphereTravel.root.visible = state.heliosphere;
     this.heliospherePresentation.setLayers(state.heliosphereLayers ?? defaultHeliosphereLayers());
     this.gravityPresentation.root.visible = state.gravity;
     this.starField.visible = !(state.gravity || state.heliosphere);
@@ -685,6 +692,7 @@ export class OrbitalScene {
     if (qualityKey === this.appliedQualityKey) return;
     this.appliedQualityKey = qualityKey;
     this.heliosphereBackground.setDensity(quality, viewportWidth);
+    this.heliosphereTravel.setDensity(quality, viewportWidth);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.starField.geometry.setDrawRange(
       0,
