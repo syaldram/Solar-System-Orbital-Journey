@@ -39,15 +39,21 @@ export class HeliosphereBackground {
     const random = seededRandom(15_102_026);
     const capacity = getRenderingQualityProfile('high').heliosphereStarCount;
     const positions = new Float32Array(capacity * 3);
+    const colors = new Float32Array(capacity * 3);
+    const color = new THREE.Color();
     for (let index = 0; index < capacity; index += 1) {
       const azimuth = random() * Math.PI * 2;
       const vertical = random() * 2 - 1;
       const horizontal = Math.sqrt(1 - vertical * vertical);
+      // Most stars remain dim; a small deterministic bright population adds depth.
+      const brightness = 0.2 + 0.7 * Math.pow(random(), 4);
+      color.setRGB(brightness * 0.8, brightness * 0.88, brightness);
+      colors.set(color.toArray(), index * 3);
       positions.set([2_200 * horizontal * Math.cos(azimuth), 2_200 * vertical, 2_200 * horizontal * Math.sin(azimuth)], index * 3);
     }
     this.stars = new THREE.Points(
-      new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)),
-      new THREE.PointsMaterial({ color: 0x485063, size: 1.25, sizeAttenuation: false, depthTest: false, depthWrite: false }),
+      new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)).setAttribute('color', new THREE.BufferAttribute(colors, 3)),
+      new THREE.PointsMaterial({ color: 0xffffff, vertexColors: true, size: 1.45, sizeAttenuation: false, depthTest: false, depthWrite: false }),
     );
     this.root.name = 'heliosphere-background';
     this.band.name = 'heliosphere-milky-way-band';

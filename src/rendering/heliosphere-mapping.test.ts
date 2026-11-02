@@ -36,10 +36,13 @@ describe('heliosphere display contract', () => {
       }
     }
   });
-  it('allocates nested cutaway shells with an extended tail and releases each resource', () => {
+  it('allocates complete nested cloudy envelopes with an extended tail and releases each resource', () => {
     const presentation = new HeliospherePresentation();
     const meshes = presentation.root.children.filter((object) => object instanceof THREE.Mesh);
+    expect(meshes).toHaveLength(5);
     const extents = meshes.map((mesh) => {
+      if (!(mesh.geometry instanceof THREE.SphereGeometry)) throw new Error('Missing sphere geometry');
+      expect(mesh.geometry.parameters).toMatchObject({ phiStart: 0, phiLength: Math.PI * 2, thetaStart: 0, thetaLength: Math.PI });
       mesh.geometry.computeBoundingBox();
       if (!mesh.geometry.boundingBox) throw new Error('Missing geometry bounds');
       return mesh.geometry.boundingBox;
@@ -48,6 +51,11 @@ describe('heliosphere display contract', () => {
     if (!outer || !middle || !shock) throw new Error('Missing shells');
     expect(outer.min.x).toBeLessThan(middle.min.x);
     expect(middle.min.x).toBeLessThan(shock.min.x);
+    for (const bounds of extents) {
+      expect(bounds.max.y).toBeGreaterThan(80);
+      expect(bounds.min.y).toBeCloseTo(-bounds.max.y, 5);
+    }
+    expect(presentation.root.children.some((object) => object instanceof THREE.Line)).toBe(false);
     expect(Math.abs(outer.min.x) / outer.max.x).toBeCloseTo(2.5);
     const spies = presentation.root.children.flatMap((object) => {
       if (!(object instanceof THREE.Mesh || object instanceof THREE.Line)) return [];
@@ -66,12 +74,24 @@ it('samples actual nested geometry, flow and shimmer through a complete 20-secon
   const geometry = flow.geometry;
   const positions = geometry.getAttribute('position');
   const initialRadius = Math.hypot(positions.getX(0), positions.getY(0) / .85, positions.getZ(0));
-  const shell = presentation.drawables[0]?.object;
-  if (!(shell instanceof THREE.Mesh)) throw new Error('Missing shell');
-  const initialOpacity = shell.material.opacity;
+  const clouds = presentation.drawables.flatMap(({ object }) => {
+    if (!(object instanceof THREE.Mesh)) return [];
+    if (!(object.material instanceof THREE.ShaderMaterial)) throw new Error('Missing cloud shader');
+    return [{ object, material: object.material, baseOpacity: object.material.opacity }];
+  });
+  expect(clouds).toHaveLength(5);
+  const expectCloudPhase = (phase: number) => {
+    for (const { object, material, baseOpacity } of clouds) {
+      expect(object.material).toBe(material);
+      expect(material.uniforms.phase?.value).toBe(phase);
+      expect(material.opacity).toBeCloseTo(baseOpacity * (1 + 0.07 * Math.sin(phase * 0.8)), 12);
+      expect(material.uniforms.envelopeOpacity?.value).toBe(material.opacity);
+    }
+  };
   for (const [phase, scale] of [[0, 1], [5, 1.02], [10, 1], [15, .98], [20, 1]] as const) {
     presentation.render(phase);
     presentation.root.updateMatrixWorld(true);
+    expectCloudPhase(phase);
     expect(presentation.root.scale.x).toBeCloseTo(scale, 12);
     const bounds = presentation.drawables.filter(({ object }) => object instanceof THREE.Mesh).slice(0, 3).map(({ object }) => new THREE.Box3().setFromObject(object));
     const [outer, middle, inner] = bounds;
@@ -81,22 +101,37 @@ it('samples actual nested geometry, flow and shimmer through a complete 20-secon
   }
   presentation.render(1);
   expect(Math.hypot(positions.getX(0), positions.getY(0) / .85, positions.getZ(0))).toBeCloseTo(initialRadius + 2, 5);
-  expect(shell.material.opacity).not.toBe(initialOpacity);
+  expectCloudPhase(1);
   const snapshot = Array.from(positions.array);
   const version = positions.version;
   const rebuildBounds = vi.spyOn(geometry, 'computeBoundingSphere');
   presentation.render(1);
   expect(positions.version).toBe(version);
+  expectCloudPhase(1);
   expect(rebuildBounds).not.toHaveBeenCalled();
   expect(Array.from(positions.array)).toEqual(snapshot);
   expect(flow.geometry).toBe(geometry);
   presentation.setLayers({ outerHeliosphere: false, terminationShock: true, orbitPaths: true, labels: true });
   expect(flow.visible).toBe(false);
+  expectCloudPhase(1);
   expect(presentation.drawables.find(({ object }) => object === flow)).toMatchObject({ region: 'solar-wind', layer: 'outerHeliosphere' });
   presentation.setLayers({ outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true });
   presentation.render(1);
   expect(flow.visible).toBe(true);
   expect(positions.version).toBe(version);
+  expectCloudPhase(1);
+  for (const [phase, hiddenLayer] of [[2, 'outerHeliosphere'], [3, 'terminationShock']] as const) {
+    presentation.setLayers({ outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true, [hiddenLayer]: false });
+    presentation.render(phase);
+    expectCloudPhase(phase);
+    for (const { object, layer } of presentation.drawables) expect(object.visible).toBe(layer !== hiddenLayer);
+    const hiddenVersion = positions.version;
+    presentation.setLayers({ outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true });
+    presentation.render(phase);
+    expectCloudPhase(phase);
+    for (const { object } of presentation.drawables) expect(object.visible).toBe(true);
+    expect(positions.version).toBe(hiddenVersion);
+  }
   const geometryDisposed = vi.spyOn(geometry, 'dispose');
   const materialDisposed = vi.spyOn(flow.material as THREE.Material, 'dispose');
   presentation.dispose();

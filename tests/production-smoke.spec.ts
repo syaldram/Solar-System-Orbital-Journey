@@ -60,7 +60,7 @@ test('built repository-subpath Heliosphere renders and preserves entry controls 
   await expect.poll(() => page.locator('#current-date').textContent()).not.toBe(date);
   await page.locator('#play-toggle').click();
   await page.getByRole('button', { name: 'Explain this view' }).click();
-  await expect(page.getByText(/The faint Milky Way band and distant stars are decorative artwork/)).toBeVisible();
+  await expect(page.getByText(/The faint Milky Way band and varied distant stars are decorative artwork/)).toBeVisible();
   const disclosurePath = testInfo.outputPath(`built-heliosphere-semantic-disclosure-${testInfo.project.name}.png`);
   await page.screenshot({ path: disclosurePath });
   await testInfo.attach('built-heliosphere-semantic-disclosure', { path: disclosurePath, contentType: 'image/png' });

@@ -11,15 +11,19 @@ it('owns deterministic, static sky geometry and reduces actual draw density for 
   const band = background.root.getObjectByName('heliosphere-milky-way-band');
   if (!(stars instanceof THREE.Points) || !(otherStars instanceof THREE.Points) || !(band instanceof THREE.Mesh) || !(band.material instanceof THREE.ShaderMaterial)) throw new Error('Missing sky');
   expect(stars.geometry.getAttribute('position').array).toEqual(otherStars.geometry.getAttribute('position').array);
+  expect(stars.geometry.getAttribute('color').array).toEqual(otherStars.geometry.getAttribute('color').array);
+  const brightness = Array.from(stars.geometry.getAttribute('color').array, Number);
+  expect(Math.max(...brightness) - Math.min(...brightness)).toBeGreaterThan(0.5);
+  expect(stars.material.vertexColors).toBe(true);
   expect(band.material.uniforms).toEqual({});
   expect(band.material.depthWrite).toBe(false);
   expect(band.material.side).toBe(THREE.BackSide);
-  expect(stars.material.color.getHex()).toBe(0x485063);
+  expect(stars.material.color.getHex()).toBe(0xffffff);
   expect(stars.material.transparent).toBe(false);
   expect(stars.material.depthTest).toBe(false);
   expect(stars.renderOrder).toBeLessThan(0);
   expect(background.root.visible).toBe(false);
-  for (const [quality, width, count] of [['high', 1280, 900], ['balanced', 1280, 550], ['low', 1280, 280], ['high', 700, 405], ['high', 701, 900], ['low', 390, 126]] as const) {
+  for (const [quality, width, count] of [['high', 1280, 1500], ['balanced', 1280, 900], ['low', 1280, 450], ['high', 700, 675], ['high', 701, 1500], ['low', 390, 202]] as const) {
     background.setDensity(getRenderingQualityProfile(quality), width);
     expect(stars.geometry.drawRange.count).toBe(count);
   }

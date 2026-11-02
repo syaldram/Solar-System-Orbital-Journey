@@ -230,7 +230,7 @@ it('heliosphere camera commands orbit/pan/zoom without changing Follow and avoid
   expect(app.camera.position.length()).toBeGreaterThan(0);
 });
 
-it.each([0.4, 390 / 844, 0.6, 0.72, 0.8, 1, 1.1, 1.23, 16 / 9])('fits actual cutaway vertices on entry and Reset at aspect %s', async (aspect) => {
+it.each([0.4, 390 / 844, 0.6, 0.72, 0.8, 1, 1.1, 1.23, 16 / 9])('fits complete envelope vertices on entry and Reset at aspect %s', async (aspect) => {
   const { HeliospherePresentation } = await import('./heliosphere-presentation');
   const camera = new THREE.PerspectiveCamera(43, aspect, 0.002, 5000);
   const controller = new SceneCameraController(camera, {} as HTMLCanvasElement, new THREE.Mesh(), new Map());

@@ -36,7 +36,7 @@ import { AdaptiveQualityMonitor } from './adaptive-quality-monitor';
 import { getRenderingQualityProfile } from './quality-profile';
 import { GravityPresentation } from './gravity-presentation';
 import { compressGravityPosition, gravityCenters, gravityBodyPosition, gravityBodyRadius, gravitySurfaceHeight, GRAVITY_SUN_RADIUS } from './gravity-mapping';
-import { HeliospherePresentation } from './heliosphere-presentation';
+import { HeliospherePresentation, heliosphereHitStrength } from './heliosphere-presentation';
 import { HeliosphereBackground } from './heliosphere-background';
 import { mapHeliospherePosition, heliosphereBodyRadius, HELIOSPHERE_SUN_RADIUS } from './heliosphere-mapping';
 import type { CameraNavigation } from './scene-camera-controller';
@@ -700,7 +700,7 @@ export class OrbitalScene {
 }
 
 /** One activation resolves markers first (in handlePointer), then bodies, then
- * nearest region surface. Eligibility follows the drawable's actual ancestry. */
+ * strongest visible region envelope. Eligibility follows the drawable's actual ancestry. */
 export function isDisplayed(object: THREE.Object3D): boolean {
   for (let current: THREE.Object3D | null = object; current; current = current.parent) {
     if (!current.visible) return false;
@@ -717,7 +717,10 @@ export function resolveSceneSelection(
   const body = raycaster.intersectObjects(bodies.filter(isDisplayed), false)[0];
   if (body) return { kind: 'body', body: body.object.userData.planetId as PlanetId | undefined ?? 'sun' };
   const eligible = regions.filter(({ object }) => isDisplayed(object));
-  const hit = raycaster.intersectObjects(eligible.map(({ object }) => object), false)[0];
+  const hits = raycaster.intersectObjects(eligible.map(({ object }) => object), false);
+  // Translucent foregrounds must not swallow clicks on brighter inner limbs.
+  const hit = hits.reduce<THREE.Intersection | undefined>((best, candidate) =>
+    !best || heliosphereHitStrength(candidate, raycaster.ray) > heliosphereHitStrength(best, raycaster.ray) ? candidate : best, undefined);
   const region = eligible.find(({ object }) => object === hit?.object)?.region;
   return region ? { kind: 'region', region } : null;
 }

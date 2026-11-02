@@ -6,6 +6,7 @@ interface HeliosphereRenderSample {
   boundaryScale: number;
   flow: number[];
   shimmer: number;
+  cloudPhase: number;
   solarTime: number;
   spin: number;
   positions: number[][];
@@ -73,6 +74,7 @@ OrbitalScene.prototype.render = function(state, now) {
     boundaryScale: presentation.root.scale.x,
     flow: Array.from(flow.geometry.getAttribute('position').array).slice(0, 9),
     shimmer: presentation.drawables[0].object.material.opacity,
+    cloudPhase: presentation.drawables[0].object.material.uniforms.phase.value,
     solarTime: sun.material.uniforms.time.value,
     spin: this.planetMeshes.get('earth').rotation.y,
     positions: Array.from(this.planetTiltGroups.values()).map(object => object.position.toArray()),
@@ -156,7 +158,7 @@ test('Heliosphere static sky adapts actual density and retains readable semantic
   await renderedFrames(page);
   const initial = await heliosphereSky(page);
   expect(initial.visible).toBe(true);
-  expect(initial.starCount).toBe(900);
+  expect(initial.starCount).toBe(1500);
   expect(initial.uniforms).toEqual([]);
   await renderedFrames(page, 10);
   expect(await heliosphereSky(page)).toEqual(initial);
@@ -186,14 +188,14 @@ test('Heliosphere static sky adapts actual density and retains readable semantic
   await page.getByRole('button', { name: 'View options' }).click();
   await page.getByLabel('Visual quality').selectOption('low');
   await page.getByRole('button', { name: 'Close options' }).click();
-  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(280);
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(450);
   await captureHeliosphere(page, testInfo, 'sky-desktop-low');
   await page.getByRole('button', { name: 'View options' }).click();
   await page.getByLabel('Visual quality').selectOption('high');
   await page.getByRole('button', { name: 'Close options' }).click();
   // Resize at fixed DPR, preserving the live session and quality preference.
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(405);
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(675);
   await page.locator('[data-heliosphere-layer="labels"]').check();
   await page.locator('#close-planet').click();
   await page.locator('#heliosphere-reset-camera').click();
@@ -212,10 +214,11 @@ test('Heliosphere static sky adapts actual density and retains readable semantic
   await renderedFrames(page);
   await captureHeliosphere(page, testInfo, 'sky-phone-region-card');
   await page.setViewportSize({ width: 1280, height: 720 });
-  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(900);
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(1500);
   await page.getByRole('button', { name: 'Explain this view' }).click();
-  await expect(page.getByText(/The faint Milky Way band and distant stars are decorative artwork/)).toBeVisible();
+  await expect(page.getByText(/The faint Milky Way band and varied distant stars are decorative artwork/)).toBeVisible();
   await expect(page.getByText(/Tail orientation is illustrative and is not inferred/)).toBeVisible();
+  await expect(page.getByText(/The finite interstellar envelope is an explanatory sample of space beyond the heliopause, not another physical boundary/)).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -291,7 +294,7 @@ test('Heliosphere static sky phone low quality keeps Labels-off card and keyboar
   await page.getByLabel('Visual quality').selectOption('low');
   await page.getByRole('button', { name: 'Close options' }).click();
   await page.locator('#enter-heliosphere').click();
-  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(126);
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(202);
   await page.locator('#heliosphere-sheet > summary').click();
   await renderedFrames(page);
   await captureHeliosphere(page, testInfo, 'sky-phone-low-overview');
@@ -313,7 +316,10 @@ test('Heliosphere static sky phone low quality keeps Labels-off card and keyboar
   expect(errors).toEqual([]);
 });
 
-test('Heliosphere actual flow, shimmer, Sun and spin share retained motion through playback lifecycle', async ({ page }, testInfo) => {
+test('Heliosphere actual flow, shimmer, Sun and spin share retained motion through playback lifecycle', async ({ page, browserName }, testInfo) => {
+  // This all-speed lifecycle has many sequential interactions; Chromium's
+  // software rendering can exceed 30 seconds even without competing tests.
+  test.slow(browserName === 'chromium');
   await observeHeliosphereRender(page);
   await page.goto('./?view=sun&body=earth');
   await page.locator('#enter-heliosphere').click();
@@ -494,7 +500,7 @@ test('Heliosphere delayed RAF charges only permitted wall intervals and never ca
     const after = await frame();
     expect(after.phase - before.phase).toBeCloseTo(1, 8);
     expect(after.boundaryScale).toBeCloseTo(1 + .02 * Math.sin(after.phase * Math.PI / 10), 10);
-    expect(after.shimmer).toBeCloseTo(.15 * (1 + .07 * Math.sin(after.phase * .8)), 10);
+    expect(after.shimmer).toBeCloseTo(.58 * (1 + .07 * Math.sin(after.phase * .8)), 10);
     // First visible flow particle moves radially at two scene units per second.
     const radius = (sample: HeliosphereRenderSample) => Math.hypot(sample.flow[0] ?? 0, (sample.flow[1] ?? 0) / .85, sample.flow[2] ?? 0);
     expect(radius(after) - radius(before)).toBeCloseTo(2, 5);
@@ -1719,7 +1725,15 @@ test('Heliosphere real touch orbit, pinch and two-finger pan move mapped markers
   // Pan first so the followed Earth is offset from the orbit/zoom target;
   // its visible position then observes all three gestures without using an offscreen planet.
   for (const gesture of ['pan', 'orbit', 'pinch']) {
-    const start = gesture === 'orbit' ? [{ x: 160, y: 300, id: 0 }] : [{ x: 120, y: 300, id: 0 }, { x: 230, y: 300, id: 1 }];
+    // Find canvas points between the camera controls and sheet. Planet labels
+    // move after each gesture and must not become the next gesture's target.
+    const start = await page.evaluate((kind) => {
+      for (let y = 270; y <= 360; y += 10) {
+        const points = kind === 'orbit' ? [{ x: 160, y, id: 0 }] : [{ x: 120, y, id: 0 }, { x: 230, y, id: 1 }];
+        if (points.every(({ x, y }) => document.elementFromPoint(x, y)?.tagName === 'CANVAS')) return points;
+      }
+      throw new Error('No unobscured canvas points for native touch gesture');
+    }, gesture);
     for (const point of start) {
       expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, point)).toBe('CANVAS');
     }
@@ -1748,6 +1762,33 @@ for (const [name, width, height] of [['desktop', 1280, 720], ['square', 900, 900
   await captureHeliosphere(page, testInfo, `${name}-overview`);
 });
 
+test('Heliosphere cloudy envelopes remain closed from upper and lower orbit views', async ({ page }, testInfo) => {
+  const errors = collectRenderErrors(page);
+  await observeHeliosphereRender(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('./?date=2042-03-14T12%3A30%3A00Z&view=sun');
+  await page.locator('#enter-heliosphere').click();
+  await renderedFrames(page);
+  const initial = await heliosphereRender(page);
+  for (const [direction, steps] of [['up', 3], ['down', 9]] as const) {
+    await page.locator('#heliosphere-reset-camera').click();
+    for (let step = 0; step < steps; step++) await page.getByRole('button', { name: `Orbit ${direction}`, exact: true }).click();
+    await settledBoundingBox(page.locator('[data-body="earth"]'));
+    await captureHeliosphere(page, testInfo, `cloud-envelope-${direction}`);
+    expect(await heliosphereRender(page)).toEqual(initial);
+    for (const body of ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune']) {
+      await expect(page.locator(`[data-body="${body}"]`)).toBeVisible();
+    }
+  }
+  await page.locator('[data-heliosphere-layer="outerHeliosphere"]').uncheck();
+  await captureHeliosphere(page, testInfo, 'cloud-shock-only-below');
+  await page.locator('[data-heliosphere-layer="outerHeliosphere"]').check();
+  await page.locator('[data-heliosphere-layer="terminationShock"]').uncheck();
+  await captureHeliosphere(page, testInfo, 'cloud-outer-only-below');
+  expect(await heliosphereRender(page)).toEqual(initial);
+  expect(errors).toEqual([]);
+});
+
 test('Heliosphere exposes effective checkbox values and accurate freeze/share descriptions', async ({ page }) => {
   await page.goto('./?view=sun');
   await expect(page.locator('#gravity-share-reason')).toBeHidden();
@@ -1766,11 +1807,11 @@ test('Heliosphere exposes effective checkbox values and accurate freeze/share de
 });
 
 const regionCases = [
-  ['solar-wind', 'Solar wind', 'A flow of charged particles from the Sun surrounds all eight planets.', 568.71, 372.70],
-  ['termination-shock', 'Termination shock', 'The boundary where the solar wind slows abruptly.', 476.71, 380.82],
-  ['heliosheath', 'Heliosheath', 'The region of slowed solar wind between the termination shock and heliopause.', 439.94, 384.07],
-  ['heliopause', 'Heliopause', 'The boundary where the solar-wind environment meets interstellar plasma.', 400.32, 387.56],
-  ['interstellar-space', 'Interstellar space', "Space beyond the heliopause; the Solar System's distant objects extend farther.", 367.26, 390.48],
+  ['solar-wind', 'Solar wind', 'A flow of charged particles from the Sun surrounds all eight planets.', 550, 300],
+  ['termination-shock', 'Termination shock', 'The boundary where the solar wind slows abruptly.', 414, 300],
+  ['heliosheath', 'Heliosheath', 'The region of slowed solar wind between the termination shock and heliopause.', 380, 300],
+  ['heliopause', 'Heliopause', 'The boundary where the solar-wind environment meets interstellar plasma.', 332, 300],
+  ['interstellar-space', 'Interstellar space', "Space beyond the heliopause; the Solar System's distant objects extend farther.", 315, 380],
 ] as const;
 
 test('Heliosphere physically picks five visible surfaces and exposes identical semantic selections', async ({ page, browserName }) => {
@@ -1779,8 +1820,8 @@ test('Heliosphere physically picks five visible surfaces and exposes identical s
   await page.locator('#enter-heliosphere').click();
   await settledBoundingBox(page.locator('[data-body="earth"]'));
   await page.locator('[data-heliosphere-layer="labels"]').uncheck();
-  // Coordinates come from projection of actual renderer-delivered cut-surface
-  // geometry in orbital-scene.test.ts, with the same deterministic overview.
+  // Coordinates target actual renderer-delivered curved envelope limbs
+  // tested in orbital-scene.test.ts, with the same deterministic overview.
   for (const [, name, explanation, x, y] of regionCases) {
     await page.mouse.click(x, y);
     await expect(page.locator('#planet-name')).toHaveText(name);
@@ -1818,7 +1859,7 @@ test('Heliosphere hidden surfaces stay unpickable, buttons preserve layers, and 
   await expect(page.locator('#planet-card')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('#planet-card')).toBeHidden();
-  await page.mouse.click(400.32, 387.56);
+  await page.mouse.click(332, 300);
   // The visible shock shell underneath may legitimately win; the hidden
   // heliopause cannot be returned by the common resolver.
   await expect.poll(async () => await page.locator('#planet-card').isVisible()
@@ -1832,7 +1873,7 @@ test('Heliosphere hidden surfaces stay unpickable, buttons preserve layers, and 
   await renderedFrames(page);
   await page.keyboard.press('Escape');
   await expect(page.locator('#planet-card')).toBeHidden();
-  await page.mouse.click(476.71, 380.82);
+  await page.mouse.click(414, 300);
   await expect(page.locator('#planet-card')).toBeHidden();
   await page.locator('[data-region="termination-shock"]').focus();
   await page.keyboard.press('Space');
@@ -1893,10 +1934,10 @@ test('Heliosphere reactivation restores its card and close focus while labels-of
     await expect(page.locator('#planet-name')).toHaveText(planet);
   }
   await expect(page.locator('#heliosphere-regions button')).toHaveCount(5);
-  await page.mouse.click(568.71, 372.70);
+  await page.mouse.click(550, 300);
   await expect(page.locator('#planet-name')).toHaveText('Solar wind');
   await page.locator('#heliosphere-sheet > summary').click();
-  await page.mouse.click(568.71, 372.70);
+  await page.mouse.click(550, 300);
   await expect(page.locator('#heliosphere-sheet')).toHaveAttribute('open');
   await expect(page.locator('#planet-name')).toBeInViewport();
   await page.locator('#close-planet').click();
@@ -2008,7 +2049,7 @@ AdaptiveQualityMonitor.prototype.sample = function(preference, now) {
   expect(before.phase).toBeGreaterThan(.2);
   await page.evaluate(() => { (window as unknown as { __slowFrames: boolean }).__slowFrames = true; });
   await expect(page.locator('#quality-select')).toHaveValue('balanced', { timeout: 20000 });
-  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(550);
+  await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(900);
   const after = await heliosphereRender(page);
   expect(after.positions).toEqual(before.positions);
   expect(after.phase).toBe(before.phase);

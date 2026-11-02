@@ -75,7 +75,7 @@ it('integrates mapped mesh/path geometry and retained decorative animation throu
   expect(background.visible).toBe(true);
   const sky = () => ({ transform: background.matrixWorld.toArray(), children: [band.matrix.toArray(), stars.matrix.toArray()], stars: Array.from(stars.geometry.getAttribute('position').array), starMaterial: stars.material.toJSON(), band: band.material.toJSON() });
   const staticSky = sky();
-  expect(stars.geometry.drawRange.count).toBe(900);
+  expect(stars.geometry.drawRange.count).toBe(1500);
   const frozen = decoration();
   scene.render(heliosphere, 5000);
   expect(decoration()).toEqual(frozen);
@@ -92,15 +92,15 @@ it('integrates mapped mesh/path geometry and retained decorative animation throu
   expect(sky()).toEqual(staticSky);
   const mappedBeforeQuality = planets.map((mesh) => mesh.getWorldPosition(new THREE.Vector3()).toArray());
   scene.render({ ...playing, quality: 'low', heliospherePhaseSeconds: 0.02 }, 9011);
-  expect(stars.geometry.drawRange.count).toBe(280);
+  expect(stars.geometry.drawRange.count).toBe(450);
   expect(planets.map((mesh) => mesh.getWorldPosition(new THREE.Vector3()).toArray())).toEqual(mappedBeforeQuality);
   scene.render({ ...playing, heliospherePhaseSeconds: 0.02 }, 9012);
   capture.width = 390;
   scene.resize();
-  expect(stars.geometry.drawRange.count).toBe(405);
+  expect(stars.geometry.drawRange.count).toBe(675);
   capture.width = 1280;
   scene.resize();
-  expect(stars.geometry.drawRange.count).toBe(900);
+  expect(stars.geometry.drawRange.count).toBe(1500);
   planets.forEach((mesh) => expect(mesh.rotation.y).toBeCloseTo(1.7 + 20 * 0.00008, 12));
   const resumed = decoration();
   scene.render({ ...heliosphere, heliospherePhaseSeconds: 0.02 }, 10000);
@@ -183,6 +183,8 @@ it('picks every region from the actual renderer-delivered geometry and respects 
   const flow = capture.scene?.getObjectByName('solar-wind-flow');
   if (!(flow instanceof THREE.Points)) throw new Error('Missing actual flow');
   const flowRecords: HeliospherePresentation['drawables'] = [{ object: flow, region: 'solar-wind', layer: 'outerHeliosphere' }];
+  regions.push(...flowRecords);
+  expect(regions).toHaveLength(6);
   const particle = new THREE.Vector3().fromBufferAttribute(flow.geometry.getAttribute('position'), 0);
   flow.localToWorld(particle);
   raycaster.set(particle.clone().add(new THREE.Vector3(0, 5, 0)), new THREE.Vector3(0, -1, 0));
@@ -196,9 +198,9 @@ it('picks every region from the actual renderer-delivered geometry and respects 
       scene.render(animatedState, 100000);
       const root = regions[0]?.object.parent;
       if (!root) throw new Error('Missing rendered boundary transform');
-      for (const [region, radius] of [['solar-wind', 70], ['termination-shock', 111], ['heliosheath', 127], ['heliopause', 144], ['interstellar-space', 158]] as const) {
-        const point = root.localToWorld(new THREE.Vector3(-1.5 * radius, 0, .8 * radius)).project(camera);
-        raycaster.setFromCamera(new THREE.Vector2(point.x, point.y), camera);
+      for (const [region, x, y] of [['solar-wind', 550, 300], ['termination-shock', 414, 300], ['heliosheath', 380, 300], ['heliopause', 332, 300], ['interstellar-space', 315, 380]] as const) {
+        // Curved visible limbs, including inner regions behind faint foreground shells.
+        raycaster.setFromCamera(new THREE.Vector2(x / 1280 * 2 - 1, 1 - y / 720 * 2), camera);
         expect(resolveSceneSelection(raycaster, [], regions)).toEqual({ kind: 'region', region });
         const layer = region === 'termination-shock' ? 'terminationShock' : 'outerHeliosphere';
         scene.render({ ...animatedState, heliosphereLayers: { outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true, [layer]: false } }, 100001);
@@ -208,11 +210,19 @@ it('picks every region from the actual renderer-delivered geometry and respects 
       }
     }
   }
+  // The closed upper and lower halves both expose interior artwork. A nearest
+  // intersection-only resolver would incorrectly select interstellar space.
   scene.render(renderState, 100003);
+  for (const height of [-400, 400]) {
+    for (const [region, radius] of [['solar-wind', 70], ['termination-shock', 108], ['heliosheath', 120], ['heliopause', 138], ['interstellar-space', 158]] as const) {
+      raycaster.set(new THREE.Vector3(radius, height, 0), new THREE.Vector3(0, -Math.sign(height), 0));
+      expect(resolveSceneSelection(raycaster, [], regions)).toEqual({ kind: 'region', region });
+    }
+  }
+  raycaster.setFromCamera(new THREE.Vector2(315 / 1280 * 2 - 1, 1 - 380 / 720 * 2), camera);
   // Exercise the actual registered canvas event handlers against visible
   // renderer-delivered geometry, without exposing a gesture test API.
-  const point = new THREE.Vector3(-237, 0, 126.4).project(camera);
-  const pointer = { pointerId: 1, clientX: (point.x * .5 + .5) * 1280, clientY: (-point.y * .5 + .5) * 720, button: 0, isPrimary: true };
+  const pointer = { pointerId: 1, clientX: 315, clientY: 380, button: 0, isPrimary: true };
   const emit = (type: string, event: Partial<PointerEvent> = {}) => handlers.get(type)?.({ ...pointer, ...event } as PointerEvent);
   emit('pointerdown'); emit('pointerup');
   expect(onSelect).toHaveBeenLastCalledWith({ kind: 'region', region: 'interstellar-space' });
@@ -261,11 +271,11 @@ it('routes actual slow auto samples through callback state into reduced renderer
   const positions = () => PLANET_IDS.map((id) => capture.scene?.getObjectByName(id)?.getWorldPosition(new THREE.Vector3()).toArray());
   const before = positions();
   expect(capture.pixelRatio).toBe(2);
-  expect(stars.geometry.drawRange.count).toBe(900);
+  expect(stars.geometry.drawRange.count).toBe(1500);
   for (let i = 1; i <= 181; i++) scene.render(state, i * 30);
   expect(adapted).toHaveBeenCalledExactlyOnceWith('balanced');
   expect(capture.pixelRatio).toBe(1.5);
-  expect(stars.geometry.drawRange.count).toBe(550);
+  expect(stars.geometry.drawRange.count).toBe(900);
   expect(positions()).toEqual(before);
   const boundary = capture.scene?.getObjectByName('termination-shock')?.parent;
   expect(boundary?.scale.x).toBeCloseTo(1.02);
