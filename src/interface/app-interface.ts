@@ -1,3 +1,4 @@
+import type { CameraNavigation } from '../rendering/scene-camera-controller';
 import { getPlanetProfile, type PlanetProfile } from '../astronomy/planet-data';
 import type { PlanetId } from '../astronomy/solar-system';
 import { GALACTIC_MODEL } from '../astronomy/reference-frames';
@@ -6,11 +7,14 @@ import type {
   ExperienceAction,
   ExperienceState,
   GalacticPlaybackSpeed,
+  PresentationHandoff,
   SelectableBody,
+  Selection,
+  HeliosphereLayers,
   ViewMode,
   ViewOptions,
 } from '../experience/experience-state';
-import { GALACTIC_PLAYBACK_SPEEDS, getGalacticOrbitPresentation } from '../experience/experience-state';
+import { selectedBody, HELIOSPHERE_REGIONS, GALACTIC_PLAYBACK_SPEEDS, getGalacticOrbitPresentation } from '../experience/experience-state';
 import { QUALITY_CORONA_DETAIL, resolveQualityTier } from '../experience/quality';
 import { TOUR_CHAPTERS } from '../experience/tour';
 
@@ -27,6 +31,7 @@ export interface AppInterfaceOptions {
   readonly onFocus: (body: SelectableBody) => void;
   readonly onFollow: (planet: PlanetId) => void;
   readonly onResetCamera: () => void;
+  readonly onNavigateCamera: (command: CameraNavigation) => void;
   readonly onReturnHome: () => void;
 }
 
@@ -48,6 +53,19 @@ function formatDate(timeMs: number): string {
 function formatNumber(value: number, maximumFractionDigits = 2): string {
   return new Intl.NumberFormat('en', { maximumFractionDigits }).format(value);
 }
+
+export const REGION_CONTENT = {
+  'solar-wind': { name: 'Solar wind', explanation: 'A flow of charged particles from the Sun surrounds all eight planets.' },
+  'termination-shock': { name: 'Termination shock', explanation: 'The boundary where the solar wind slows abruptly.' },
+  'heliosheath': { name: 'Heliosheath', explanation: 'The region of slowed solar wind between the termination shock and heliopause.' },
+  'heliopause': { name: 'Heliopause', explanation: 'The boundary where the solar-wind environment meets interstellar plasma.' },
+  'interstellar-space': { name: 'Interstellar space', explanation: "Space beyond the heliopause; the Solar System's distant objects extend farther." },
+};
+const HELIOSPHERE_EXPLANATION = {
+  title: 'Heliosphere',
+  status: 'Travel together · illustrative tracking view',
+  html: `<p>The solar wind is a flow of charged particles from the Sun. All eight major planets lie inside the termination shock, where this wind slows abruptly. The heliosheath lies between that shock and the heliopause.</p><p>The heliopause is a plasma boundary where the solar-wind environment meets interstellar plasma. It is not the edge of everything belonging to the Solar System: distant objects, including the Oort Cloud, extend much farther. The finite interstellar envelope is an explanatory sample of space beyond the heliopause, not another physical boundary or material carried by the Sun.</p><p>The camera travels with the Sun, orbiting planets and animated heliosphere. Passing geometric guides reveal their shared travel while your inspection angle is retained. Direction, speed and effects are illustrative, without a physical distance or speed scale.</p><p>The complete translucent blue envelopes, smoky layers and heliotail are illustrative geometry, not a measurement of the unsettled global shape. Tail orientation is illustrative and is not inferred from the Galactic travel model. Colors, glow, body sizes and animation are explanatory artwork, not measured solar weather or a date-specific forecast. Outward solar-wind flow, shock shimmer, slower heliosheath wisps, heliopause drift and restrained interstellar texture variation share a retained illustrative phase with a 20-second, ±2% boundary cycle, independently of planetary speed. Pause freezes every effect, including the Sun and stabilized surface spin; Play resumes from the retained appearance. Scrubbing and returning from a hidden tab leave playback paused without catch-up. Reduce motion freezes decoration while allowing requested planetary motion and camera input.</p><p>The faint Milky Way band and varied distant stars are decorative artwork, not a star-by-star map or exact Galactic alignment. This background stays still during playback; manual camera navigation remains available.</p><p>Schematic — distances compressed; body sizes exaggerated. Orbital timing and physical card values use the original heliocentric JPL model. Orbit, pan or zoom to inspect the envelopes; Focus and Follow remain relative to the assembly; Reset View restores the full overview without resetting phase or date.</p>`,
+};
 
 const GRAVITY_EXPLANATION = {
   title: 'Sun’s Gravity',
@@ -89,13 +107,30 @@ export class AppInterface {
   private readonly speedSelect = element<HTMLSelectElement>('speed-select');
   private readonly toast = element<HTMLElement>('toast');
   private selectedBody: SelectableBody | null = null;
+  private regionSelected = false;
+  private renderedSelection: Selection | null = null;
+  private readonly cardPosition = document.createComment('Information card position');
   private toastTimer = 0;
   private entered = false;
-  private gravity = false;
   private currentFrame: ViewMode = 'sun';
   private renderedTimelineFrame: ViewMode | null = null;
 
   constructor(private readonly options: AppInterfaceOptions) {
+    this.planetCard.before(this.cardPosition);
+    for (const region of HELIOSPHERE_REGIONS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = REGION_CONTENT[region].name;
+      button.dataset.region = region;
+      button.addEventListener('click', () => options.dispatch({ type: 'select-region', region }));
+      element<HTMLElement>('heliosphere-regions').append(button);
+    }
+    document.querySelectorAll<HTMLInputElement>('[data-heliosphere-layer]').forEach((input) => {
+      input.addEventListener('change', () => options.dispatch({ type: 'set-heliosphere-layer', layer: input.dataset.heliosphereLayer as keyof HeliosphereLayers, enabled: input.checked }));
+    });
+    element<HTMLButtonElement>('enter-heliosphere').addEventListener('click', () => this.options.dispatch({ type: 'enter-heliosphere' }));
+    element<HTMLButtonElement>('leave-heliosphere').addEventListener('click', () => this.options.dispatch({ type: 'leave-heliosphere' }));
+    document.querySelectorAll<HTMLButtonElement>('[data-camera-navigation]').forEach((button) => button.addEventListener('click', () => this.options.onNavigateCamera(button.dataset.cameraNavigation as CameraNavigation)));
     element<HTMLButtonElement>('enter-gravity').addEventListener('click', () => this.options.dispatch({ type: 'enter-gravity' }));
     element<HTMLButtonElement>('leave-gravity').addEventListener('click', () => this.options.dispatch({ type: 'leave-gravity' }));
     element<HTMLButtonElement>('begin-journey').addEventListener('click', () => this.enter('tour'));
@@ -166,13 +201,14 @@ export class AppInterface {
     });
     element<HTMLButtonElement>('tour-next').addEventListener('click', () => this.options.dispatch({ type: 'next-chapter' }));
     element<HTMLButtonElement>('tour-skip').addEventListener('click', () => this.options.dispatch({ type: 'skip-tour' }));
-    element<HTMLButtonElement>('close-planet').addEventListener('click', () => this.options.dispatch({ type: 'select', body: null }));
+    element<HTMLButtonElement>('close-planet').addEventListener('click', () => this.closeInformation(true));
     element<HTMLButtonElement>('focus-planet').addEventListener('click', () => {
       if (this.selectedBody) options.onFocus(this.selectedBody);
     });
     element<HTMLButtonElement>('follow-planet').addEventListener('click', () => {
       if (this.selectedBody && this.selectedBody !== 'sun') options.onFollow(this.selectedBody);
     });
+    element<HTMLButtonElement>('heliosphere-reset-camera').addEventListener('click', options.onResetCamera);
     element<HTMLButtonElement>('reset-camera').addEventListener('click', options.onResetCamera);
     element<HTMLButtonElement>('replay-button').addEventListener('click', () => {
       this.options.dispatch(this.currentFrame === 'galaxy' ? { type: 'replay-galactic' } : { type: 'replay-solar' });
@@ -201,8 +237,9 @@ export class AppInterface {
     });
 
     document.addEventListener('keydown', (event) => {
+      if (event.defaultPrevented || this.sourcesDialog.open) return;
       const target = event.target as HTMLElement;
-      if (['INPUT', 'SELECT', 'BUTTON', 'SUMMARY'].includes(target.tagName)) return;
+      if (event.key !== 'Escape' && (['INPUT', 'SELECT', 'BUTTON', 'SUMMARY', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable)) return;
       if ((event.code === 'Space' || event.key === ' ') && this.entered) {
         event.preventDefault();
         this.togglePlayback();
@@ -210,29 +247,60 @@ export class AppInterface {
       if (event.key === 'Escape') {
         this.optionsPanel.hidden = true;
         this.explainPanel.hidden = true;
-        this.options.dispatch({ type: 'select', body: null });
+        this.closeInformation();
       }
     });
   }
 
+  private closeInformation(fromCloseButton = false): void {
+    const region = this.renderedSelection?.kind === 'region' ? this.renderedSelection.region : null;
+    const restore = region && (fromCloseButton || this.planetCard.contains(document.activeElement));
+    this.options.dispatch({ type: 'select', body: null });
+    if (restore) document.querySelector<HTMLButtonElement>(`[data-region="${region}"]`)?.focus();
+  }
+
+  handlePresentationHandoff(handoff: PresentationHandoff): void {
+    if (handoff.kind === 'discard') return;
+    element<HTMLButtonElement>(`${handoff.kind === 'enter' ? 'leave' : 'enter'}-${handoff.presentation}`).focus();
+  }
+
   render(state: ExperienceState, pathMotion: AlongPathMotion): void {
-    const gravity = state.gravityReturn !== null;
-    const handoff = gravity !== this.gravity;
-    this.gravity = gravity;
-    this.app.dataset.gravity = String(gravity);
-    element<HTMLElement>('enter-gravity').hidden = gravity || state.frame === 'galaxy' || state.tour.status === 'running';
+    const gravity = state.presentation.kind === 'gravity';
+    const heliosphere = state.presentation.kind === 'heliosphere';
+    const schematic = gravity || heliosphere;
+    this.app.dataset.gravity = String(schematic);
+    this.app.dataset.heliosphere = String(heliosphere);
+    element<HTMLElement>('enter-heliosphere').hidden = schematic || state.frame === 'galaxy' || state.tour.status === 'running';
+    element<HTMLElement>('leave-heliosphere').hidden = !heliosphere;
+    element<HTMLElement>('heliosphere-disclosure').hidden = !heliosphere;
+    element<HTMLElement>('heliosphere-camera-controls').hidden = !heliosphere;
+    element<HTMLElement>('heliosphere-options-reason').hidden = !heliosphere;
+    const sheet = element<HTMLDetailsElement>('heliosphere-sheet');
+    sheet.hidden = !heliosphere;
+    const cardParent = heliosphere ? element<HTMLElement>('heliosphere-sheet-content') : this.chrome;
+    if (this.planetCard.parentElement !== cardParent) {
+      if (heliosphere) cardParent.prepend(this.planetCard);
+      else this.cardPosition.after(this.planetCard);
+      if (heliosphere) sheet.open = true;
+    }
+    if (state.presentation.kind === 'heliosphere') {
+      document.querySelectorAll<HTMLInputElement>('[data-heliosphere-layer]').forEach((input) => {
+        input.checked = state.presentation.kind === 'heliosphere' && state.presentation.layers[input.dataset.heliosphereLayer as keyof HeliosphereLayers];
+      });
+    }
+    element<HTMLElement>('enter-gravity').hidden = schematic || state.frame === 'galaxy' || state.tour.status === 'running';
     element<HTMLElement>('leave-gravity').hidden = !gravity;
     element<HTMLElement>('gravity-disclosure').hidden = !gravity;
     element<HTMLElement>('gravity-options-reason').hidden = !gravity;
     const share = element<HTMLButtonElement>('share-button');
-    share.disabled = gravity;
-    share.title = gravity ? 'Sharing is unavailable in this session-only schematic. Use Back to share a scientific view.' : '';
-    if (gravity) share.setAttribute('aria-describedby', 'gravity-share-reason');
+    share.disabled = schematic;
+    share.title = schematic ? 'Sharing is unavailable in this session-only schematic. Use Back to share a scientific view.' : '';
+    element<HTMLElement>('gravity-share-reason').hidden = !schematic;
+    if (schematic) share.setAttribute('aria-describedby', 'gravity-share-reason');
     else share.removeAttribute('aria-describedby');
-    document.querySelectorAll<HTMLElement>('.view-switcher, .camera-bookmarks').forEach((navigation) => { navigation.hidden = gravity; });
-    if (handoff) element<HTMLButtonElement>(gravity ? 'leave-gravity' : 'enter-gravity').focus();
-    element<HTMLElement>('planet-distance-label').textContent = gravity ? 'Actual distance from Sun' : 'Distance now';
-    element<HTMLElement>('planet-scale-note').textContent = gravity
+    document.querySelectorAll<HTMLElement>('.view-switcher, .camera-bookmarks').forEach((navigation) => { navigation.hidden = schematic; });
+    element<HTMLElement>('planet-distance-label').textContent = schematic ? 'Actual distance from Sun' : 'Distance now';
+    element<HTMLElement>('planet-scale-note').textContent = heliosphere ? 'Physical values use the original JPL model. Schematic — distances compressed; body sizes exaggerated.' : gravity
       ? 'Physical values are calculated from the original JPL model. Displayed spacing is compressed; well depths and body sizes are exaggerated.'
       : 'Bodies share one enhanced radius scale, preserving their physical size ratios. Orbital distances remain proportional.';
     this.currentFrame = state.frame;
@@ -309,7 +377,7 @@ export class AppInterface {
       : 'Restrained corona motion uses presentation time, independent of orbit speed.';
 
     const pathMotionPanel = element<HTMLElement>('path-motion');
-    pathMotionPanel.hidden = gravity || state.frame !== 'space' || state.cameraBookmark !== 'path';
+    pathMotionPanel.hidden = schematic || state.frame !== 'space' || state.cameraBookmark !== 'path';
     pathMotionPanel.dataset.guideFlow = pathMotion.guideFlow;
     element<HTMLElement>('path-distance-au').textContent = `${formatNumber(
       pathMotion.distanceAu,
@@ -334,15 +402,18 @@ export class AppInterface {
       else button.removeAttribute('aria-current');
     });
     document.querySelectorAll<HTMLInputElement>('[data-view-option]').forEach((input) => {
-      input.disabled = gravity && ['trails', 'planeOverlays'].includes(input.dataset.viewOption ?? '');
-      if (input.disabled) input.setAttribute('aria-describedby', 'gravity-options-reason');
+      input.disabled = heliosphere || schematic && ['trails', 'planeOverlays'].includes(input.dataset.viewOption ?? '');
+      if (input.disabled) input.setAttribute('aria-describedby', heliosphere ? 'heliosphere-options-reason' : 'gravity-options-reason');
       else input.removeAttribute('aria-describedby');
-      input.checked = state.viewOptions[input.dataset.viewOption as keyof ViewOptions];
+      const option = input.dataset.viewOption as keyof ViewOptions;
+      input.checked = state.presentation.kind === 'heliosphere'
+        ? (option === 'labels' || option === 'orbitPaths') && state.presentation.layers[option]
+        : state.viewOptions[option];
     });
 
-    const explanation = gravity ? GRAVITY_EXPLANATION : EXPLANATIONS[state.frame];
+    const explanation = heliosphere ? HELIOSPHERE_EXPLANATION : gravity ? GRAVITY_EXPLANATION : EXPLANATIONS[state.frame];
     const rotationNote = state.speed === 'year' || state.speed === 'decade' ? ' · surface rotation stabilized' : '';
-    const status = !gravity && state.frame === 'space' && state.cameraBookmark === 'full'
+    const status = !schematic && state.frame === 'space' && state.cameraBookmark === 'full'
       ? 'Full 165-year path · current calculated positions'
       : explanation.status;
     element<HTMLElement>('scene-status').innerHTML = `<span class="scene-status__dot" aria-hidden="true"></span><div><strong>${explanation.title}</strong><small>${status}${rotationNote}</small></div>`;
@@ -350,16 +421,35 @@ export class AppInterface {
     solarPresentation.hidden = isGalaxy;
     const solarMotionStatus = state.reducedMotion
       ? 'Decorative solar motion frozen for reduced motion.'
+      : heliosphere && !state.isPlaying ? 'Decorative solar motion frozen while paused.'
       : 'Decorative solar motion active.';
     const coronaDetail = QUALITY_CORONA_DETAIL[resolveQualityTier(state.quality)];
     solarPresentation.textContent = `${solarMotionStatus} Driven by real presentation time; playback speed independent. Layered corona detail: ${coronaDetail}.`;
     element<HTMLElement>('explain-title').textContent = explanation.title;
     element<HTMLElement>('explain-copy').innerHTML = explanation.html;
 
-    this.selectedBody = state.selectedBody;
-    this.planetCard.hidden = state.selectedBody === null || state.selectedBody === 'sun';
+    if (heliosphere && state.selection !== this.renderedSelection && state.selection.kind !== 'none') {
+      sheet.open = true;
+      sheet.scrollTop = 0;
+    }
+    this.renderedSelection = state.selection;
+    this.regionSelected = state.selection.kind === 'region';
+    this.selectedBody = selectedBody(state);
+    this.planetCard.hidden = selectedBody(state) === null || selectedBody(state) === 'sun';
+    this.planetCard.querySelectorAll<HTMLElement>('.planet-card__metrics, details, .planet-card__actions').forEach((part) => { part.hidden = this.regionSelected; });
+    element<HTMLElement>('planet-type').textContent = this.regionSelected ? 'Selected region' : 'Selected planet';
+    element<HTMLElement>('close-planet').setAttribute('aria-label', this.regionSelected ? 'Close region information' : 'Close planet information');
+    if (state.selection.kind === 'region') {
+      const content = REGION_CONTENT[state.selection.region];
+      this.planetCard.hidden = false;
+      element<HTMLElement>('planet-name').textContent = content.name;
+      element<HTMLElement>('planet-identity').textContent = content.explanation;
+    }
+    document.querySelectorAll<HTMLButtonElement>('[data-region]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(state.selection.kind === 'region' && state.selection.region === button.dataset.region));
+    });
     const follow = element<HTMLButtonElement>('follow-planet');
-    const isFollowing = state.followedPlanet !== null && state.followedPlanet === state.selectedBody;
+    const isFollowing = state.followedPlanet !== null && state.followedPlanet === selectedBody(state);
     follow.setAttribute('aria-pressed', String(isFollowing));
     follow.textContent = isFollowing && state.followedPlanet
       ? `Stop Following ${getPlanetProfile(state.followedPlanet).name}`
@@ -387,7 +477,7 @@ export class AppInterface {
 
   renderPlanet(details: PlanetCardDetails | null): void {
     if (!details) {
-      this.planetCard.hidden = true;
+      this.planetCard.hidden = !this.regionSelected;
       return;
     }
     const { profile } = details;

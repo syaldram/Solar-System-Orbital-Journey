@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createInitialExperienceState,
+  selectedBody,
   getAlongPathMotion,
   getGalacticOrbitPresentation,
   updateExperience,
+  transitionExperience,
+  type ExperienceAction,
 } from './experience-state';
 import { applyCurrentTourChapter } from './tour';
 
@@ -368,9 +371,9 @@ describe('experience state', () => {
 
     const galaxy = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
 
-    expect(galaxy.selectedBody).toBeNull();
+    expect(selectedBody(galaxy)).toBeNull();
     expect(galaxy.followedPlanet).toBeNull();
-    expect(updateExperience(galaxy, { type: 'select', body: 'saturn' }).selectedBody).toBeNull();
+    expect(selectedBody(updateExperience(galaxy, { type: 'select', body: 'saturn' }))).toBeNull();
   });
 
   it('keeps Along the Path distance accurate while stabilizing only high-speed guide flow', () => {
@@ -428,7 +431,7 @@ describe('Sun’s Gravity session', () => {
       state = updateExperience(state, { type: 'scrub', timeMs: date + 1_000 });
       expect(state.isPlaying).toBe(true);
       state = updateExperience(state, { type: 'leave-gravity' });
-      expect(state).toMatchObject({ frame, selectedBody: 'earth', cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, gravityReturn: null, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
+      expect(state).toMatchObject({ frame, selection: { kind: 'body', body: 'earth' }, cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, presentation: { kind: 'scientific' }, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
       expect(state.trailRevision).toBe(entered.trailRevision + 1);
     }
   });
@@ -445,7 +448,7 @@ describe('Sun’s Gravity session', () => {
     const entered = updateExperience(withTrails, { type: 'enter-gravity' });
     expect(updateExperience(entered, { type: 'set-view-option', option: 'trails', enabled: false })).toBe(entered);
     for (const action of [{ type: 'return-home' }, { type: 'start-tour' }, { type: 'replay' }] as const) {
-      expect(updateExperience(entered, action).gravityReturn).toBeNull();
+      expect(updateExperience(entered, action).presentation.kind).toBe('scientific');
     }
     expect(updateExperience(entered, { type: 'leave-gravity' }).viewOptions.trails).toBe(true);
     const reduced = updateExperience(entered, { type: 'set-reduced-motion', enabled: true });
@@ -456,4 +459,277 @@ describe('Sun’s Gravity session', () => {
     state = updateExperience(state, { type: 'replay-solar' });
     expect(state).toMatchObject({ isPlaying: true, currentTimeMs: state.startTimeMs, galacticElapsedMillionYears: 0 });
   });
+});
+
+
+describe('accepted presentation lifecycle intent', () => {
+  it('emits every accepted handoff in order with monotonically fresh session IDs', () => {
+    let state = createInitialExperienceState(TODAY);
+    const handoffs = [];
+    for (const type of ['enter-gravity', 'enter-gravity', 'leave-gravity', 'leave-gravity', 'enter-gravity', 'return-home', 'enter-gravity', 'leave-gravity'] as const) {
+      const transition = transitionExperience(state, { type });
+      state = transition.state;
+      if (transition.handoff) handoffs.push(transition.handoff);
+    }
+    expect(handoffs).toEqual([
+      { kind: 'enter', presentation: 'gravity', sessionId: 1 },
+      { kind: 'back', presentation: 'gravity', sessionId: 1 },
+      { kind: 'enter', presentation: 'gravity', sessionId: 2 },
+      { kind: 'discard', presentation: 'gravity', sessionId: 2 },
+      { kind: 'enter', presentation: 'gravity', sessionId: 3 },
+      { kind: 'back', presentation: 'gravity', sessionId: 3 },
+    ]);
+  });
+
+  it('emits no intent for rejected entry or Back without a session', () => {
+    const initial = createInitialExperienceState(TODAY);
+    for (const state of [initial, updateExperience(initial, { type: 'set-frame', frame: 'galaxy' }), updateExperience(initial, { type: 'start-tour' })]) {
+      expect(transitionExperience(state, { type: 'leave-gravity' }).handoff).toBeNull();
+      if (state !== initial) expect(transitionExperience(state, { type: 'enter-gravity' }).handoff).toBeNull();
+    }
+    const entered = updateExperience(initial, { type: 'enter-gravity' });
+    expect(transitionExperience(entered, { type: 'enter-gravity' })).toEqual({ state: entered, handoff: null });
+  });
+
+  it.each<ExperienceAction>([{ type: 'return-home' }, { type: 'start-tour' }, { type: 'replay' }, { type: 'set-frame', frame: 'galaxy' }, { type: 'set-frame', frame: 'sun' }])('discards rather than restoring on $type', (action) => {
+    let state = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'earth' });
+    state = updateExperience(state, { type: 'enter-gravity' });
+    state = updateExperience(state, { type: 'select', body: 'saturn' });
+    const transition = transitionExperience(state, action);
+    expect(transition.handoff).toEqual({ kind: 'discard', presentation: 'gravity', sessionId: 1 });
+    expect(transition.state.presentation).toEqual({ kind: 'scientific' });
+    expect(selectedBody(transition.state)).toBe(action.type === 'set-frame' && action.frame === 'galaxy' ? null : 'saturn');
+    expect(transition.state.followedPlanet).toBeNull();
+    expect(transition.state.trailRevision).toBeGreaterThan(state.trailRevision);
+    expect(transitionExperience(transition.state, { type: 'leave-gravity' }).handoff).toBeNull();
+  });
+});
+
+describe('Heliosphere session', () => {
+  it('captures either scientific origin once and restores context paused at explored time/speed', () => {
+    for (const frame of ['sun', 'space'] as const) {
+      let state = updateExperience(createInitialExperienceState(TODAY), { type: 'set-frame', frame });
+      state = updateExperience(state, { type: 'set-bookmark', bookmark: 'full' });
+      state = updateExperience(state, { type: 'select', body: 'earth' });
+      state = updateExperience(state, { type: 'play' });
+      const entered = updateExperience(state, { type: 'enter-heliosphere' });
+      expect(entered.isPlaying).toBe(false);
+      expect(entered.followedPlanet).toBeNull();
+      expect(updateExperience(entered, { type: 'enter-heliosphere' })).toBe(entered);
+      const playing = updateExperience(entered, { type: 'play' });
+      state = updateExperience(playing, { type: 'select', body: 'saturn' });
+      expect(state.isPlaying).toBe(true);
+      expect(state.cameraRevision).toBe(playing.cameraRevision);
+      expect(state.cameraBookmark).toBe(playing.cameraBookmark);
+      state = updateExperience(state, { type: 'toggle-planet-follow', planet: 'saturn' });
+      expect(state.cameraBookmark).toBe('full');
+      state = updateExperience(state, { type: 'set-speed', speed: 'decade' });
+      state = updateExperience(state, { type: 'play' });
+      state = updateExperience(state, { type: 'advance', realSeconds: 2 });
+      const date = state.currentTimeMs;
+      state = updateExperience(state, { type: 'scrub', timeMs: date + 1_000 });
+      expect(state.isPlaying).toBe(false);
+      state = updateExperience(state, { type: 'leave-heliosphere' });
+      expect(state).toMatchObject({ frame, selection: { kind: 'body', body: 'earth' }, cameraBookmark: 'full', currentTimeMs: date + 1_000, speed: 'decade', followedPlanet: null, presentation: { kind: 'scientific' }, isPlaying: false, galacticElapsedMillionYears: 0, galacticSpeed: 5 });
+      expect(state.trailRevision).toBe(entered.trailRevision + 1);
+    }
+  });
+
+  it('rejects excluded entry and cleans up Home/tour transitions and unavailable overlays', () => {
+    const initial = createInitialExperienceState(TODAY);
+    for (const state of [updateExperience(initial, { type: 'set-frame', frame: 'galaxy' }), updateExperience(initial, { type: 'start-tour' })]) {
+      expect(updateExperience(state, { type: 'enter-heliosphere' })).toBe(state);
+    }
+    const withTrails = updateExperience(initial, { type: 'set-view-option', option: 'trails', enabled: true });
+    const selected = updateExperience(withTrails, { type: 'select', body: 'earth' });
+    const following = updateExperience(selected, { type: 'toggle-planet-follow', planet: 'earth' });
+    expect(updateExperience(following, { type: 'enter-heliosphere' }).followedPlanet).toBeNull();
+    const entered = updateExperience(withTrails, { type: 'enter-heliosphere' });
+    expect(updateExperience(entered, { type: 'set-view-option', option: 'trails', enabled: false })).toBe(entered);
+    for (const action of [{ type: 'return-home' }, { type: 'start-tour' }, { type: 'replay' }] as const) {
+      expect(updateExperience(entered, action).presentation.kind).toBe('scientific');
+    }
+    expect(updateExperience(entered, { type: 'leave-heliosphere' }).viewOptions.trails).toBe(true);
+    const reduced = updateExperience(entered, { type: 'set-reduced-motion', enabled: true });
+    expect(updateExperience(reduced, { type: 'leave-heliosphere' }).viewOptions.trails).toBe(true);
+    let state = updateExperience(entered, { type: 'scrub', timeMs: entered.endTimeMs });
+    state = updateExperience(state, { type: 'play' });
+    expect(state.isPlaying).toBe(false);
+    state = updateExperience(state, { type: 'replay-solar' });
+    expect(state).toMatchObject({ isPlaying: true, currentTimeMs: state.startTimeMs, galacticElapsedMillionYears: 0 });
+  });
+});
+
+
+describe('accepted heliosphere lifecycle intent', () => {
+  it('emits every accepted handoff in order with monotonically fresh session IDs', () => {
+    let state = createInitialExperienceState(TODAY);
+    const handoffs = [];
+    for (const type of ['enter-heliosphere', 'enter-heliosphere', 'leave-heliosphere', 'leave-heliosphere', 'enter-heliosphere', 'return-home', 'enter-heliosphere', 'leave-heliosphere'] as const) {
+      const transition = transitionExperience(state, { type });
+      state = transition.state;
+      if (transition.handoff) handoffs.push(transition.handoff);
+    }
+    expect(handoffs).toEqual([
+      { kind: 'enter', presentation: 'heliosphere', sessionId: 1 },
+      { kind: 'back', presentation: 'heliosphere', sessionId: 1 },
+      { kind: 'enter', presentation: 'heliosphere', sessionId: 2 },
+      { kind: 'discard', presentation: 'heliosphere', sessionId: 2 },
+      { kind: 'enter', presentation: 'heliosphere', sessionId: 3 },
+      { kind: 'back', presentation: 'heliosphere', sessionId: 3 },
+    ]);
+  });
+
+  it('emits no intent for rejected entry or Back without a session', () => {
+    const initial = createInitialExperienceState(TODAY);
+    for (const state of [initial, updateExperience(initial, { type: 'set-frame', frame: 'galaxy' }), updateExperience(initial, { type: 'start-tour' })]) {
+      expect(transitionExperience(state, { type: 'leave-heliosphere' }).handoff).toBeNull();
+      if (state !== initial) expect(transitionExperience(state, { type: 'enter-heliosphere' }).handoff).toBeNull();
+    }
+    const entered = updateExperience(initial, { type: 'enter-heliosphere' });
+    expect(transitionExperience(entered, { type: 'enter-heliosphere' })).toEqual({ state: entered, handoff: null });
+  });
+
+  it.each<ExperienceAction>([{ type: 'return-home' }, { type: 'start-tour' }, { type: 'replay' }, { type: 'set-frame', frame: 'galaxy' }, { type: 'set-frame', frame: 'sun' }])('discards rather than restoring on $type', (action) => {
+    let state = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'earth' });
+    state = updateExperience(state, { type: 'enter-heliosphere' });
+    state = updateExperience(state, { type: 'select', body: 'saturn' });
+    const transition = transitionExperience(state, action);
+    expect(transition.handoff).toEqual({ kind: 'discard', presentation: 'heliosphere', sessionId: 1 });
+    expect(transition.state.presentation).toEqual({ kind: 'scientific' });
+    expect(selectedBody(transition.state)).toBe(action.type === 'set-frame' && action.frame === 'galaxy' ? null : 'saturn');
+    expect(transition.state.followedPlanet).toBeNull();
+    expect(transition.state.trailRevision).toBeGreaterThan(state.trailRevision);
+    expect(transitionExperience(transition.state, { type: 'leave-heliosphere' }).handoff).toBeNull();
+  });
+});
+
+it('owns a single tagged selection and four isolated heliosphere session layers', () => {
+  const scientific = updateExperience(createInitialExperienceState(TODAY), { type: 'select', body: 'earth' });
+  expect(updateExperience(scientific, { type: 'select-region', region: 'solar-wind' })).toBe(scientific);
+  let state = updateExperience(scientific, { type: 'enter-heliosphere' });
+  state = updateExperience(state, { type: 'toggle-planet-follow', planet: 'earth' });
+  state = updateExperience(state, { type: 'play' });
+  const cameraRevision = state.cameraRevision;
+  for (const region of ['solar-wind', 'termination-shock', 'heliosheath', 'heliopause', 'interstellar-space'] as const) {
+    state = updateExperience(state, { type: 'select-region', region });
+    expect(state.selection).toEqual({ kind: 'region', region });
+    expect(selectedBody(state)).toBeNull();
+    expect(state.followedPlanet).toBeNull();
+    expect(state.isPlaying).toBe(true);
+    expect(state.cameraRevision).toBe(cameraRevision);
+  }
+  for (const layer of ['outerHeliosphere', 'terminationShock', 'orbitPaths', 'labels'] as const) {
+    const beforeLayers = state.presentation.kind === 'heliosphere' ? state.presentation.layers : null;
+    state = updateExperience(state, { type: 'set-heliosphere-layer', layer, enabled: false });
+    expect(state.presentation).toMatchObject({ layers: { ...beforeLayers, [layer]: false } });
+    expect(state.selection).toEqual({ kind: 'region', region: 'interstellar-space' });
+    expect(updateExperience(state, { type: 'enter-heliosphere' })).toBe(state);
+  }
+  expect(state.viewOptions).toEqual(scientific.viewOptions);
+  expect(updateExperience(state, { type: 'return-home' }).selection).toEqual({ kind: 'none' });
+  expect(updateExperience(state, { type: 'start-tour' }).selection).toEqual({ kind: 'none' });
+  state = updateExperience(state, { type: 'leave-heliosphere' });
+  expect(selectedBody(state)).toBe('earth');
+  state = updateExperience(state, { type: 'enter-heliosphere' });
+  expect(state.presentation).toMatchObject({ layers: { outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true } });
+});
+
+it('retains active heliosphere seconds independently of speed, settings, visibility and scientific clocks', () => {
+  let state = updateExperience(createInitialExperienceState(TODAY), { type: 'enter-heliosphere' });
+  const phase = () => state.presentation.kind === 'heliosphere' ? state.presentation.phaseSeconds : -1;
+  const act = (action: ExperienceAction) => { state = updateExperience(state, action); };
+  act({ type: 'advance', realSeconds: 5 });
+  expect(phase()).toBe(0);
+  for (const speed of ['day', 'month', 'year', 'decade'] as const) {
+    act({ type: 'set-speed', speed });
+    act({ type: 'play' });
+    act({ type: 'advance', realSeconds: 1.25 });
+  }
+  expect(phase()).toBe(5);
+  for (const realSeconds of [-1, NaN, Infinity]) act({ type: 'advance', realSeconds });
+  expect(phase()).toBe(5);
+  act({ type: 'set-heliosphere-layer', layer: 'outerHeliosphere', enabled: false });
+  act({ type: 'set-quality', quality: 'low' });
+  act({ type: 'select-region', region: 'heliopause' });
+  act({ type: 'reset-camera' });
+  expect(phase()).toBe(5);
+  act({ type: 'set-reduced-motion', enabled: true });
+  const before = state.currentTimeMs;
+  act({ type: 'advance', realSeconds: 1 });
+  expect(state.currentTimeMs).toBeGreaterThan(before);
+  expect(phase()).toBe(5);
+  act({ type: 'pause' });
+  act({ type: 'set-reduced-motion', enabled: false });
+  expect(state.isPlaying).toBe(false);
+  act({ type: 'play' });
+  act({ type: 'set-page-visible', visible: false });
+  const hiddenDate = state.currentTimeMs;
+  act({ type: 'play' });
+  act({ type: 'advance', realSeconds: 1000 });
+  act({ type: 'set-page-visible', visible: true });
+  expect(state.isPlaying).toBe(false);
+  expect(state.currentTimeMs).toBe(hiddenDate);
+  expect(phase()).toBe(5);
+  act({ type: 'play' });
+  act({ type: 'advance', realSeconds: 2 });
+  expect(phase()).toBe(7);
+  act({ type: 'scrub', timeMs: state.startTimeMs });
+  expect(state.isPlaying).toBe(false);
+  expect(phase()).toBe(7);
+  act({ type: 'advance', realSeconds: 10 });
+  expect(phase()).toBe(7);
+  expect(state.galacticElapsedMillionYears).toBe(0);
+  act({ type: 'leave-heliosphere' });
+  act({ type: 'play' });
+  act({ type: 'advance', realSeconds: 1 });
+  act({ type: 'enter-heliosphere' });
+  expect(phase()).toBe(0);
+});
+
+it('preserves playing and paused playback for both directions of the reduced-motion toggle', () => {
+  for (const playing of [true, false]) {
+    for (const enabled of [true, false]) {
+      let state = updateExperience(createInitialExperienceState(TODAY), { type: 'enter-heliosphere' });
+      state = updateExperience(state, { type: 'set-reduced-motion', enabled: !enabled });
+      if (playing) state = updateExperience(state, { type: 'play' });
+      const dateBefore = state.currentTimeMs;
+      const presentationBefore = state.presentation;
+      state = updateExperience(state, { type: 'set-reduced-motion', enabled });
+      expect(state.isPlaying).toBe(playing);
+      expect(state.presentation).toBe(presentationBefore);
+      state = updateExperience(state, { type: 'advance', realSeconds: 2 });
+      expect(state.currentTimeMs > dateBefore).toBe(playing);
+      expect(state.presentation.kind === 'heliosphere' && state.presentation.phaseSeconds).toBe(playing && !enabled ? 2 : 0);
+    }
+  }
+});
+
+it('advances the final permitted endpoint fraction then retains the phase without looping', () => {
+  let state = updateExperience(createInitialExperienceState(TODAY), { type: 'enter-heliosphere' });
+  state = updateExperience(state, { type: 'set-speed', speed: 'day' });
+  state = updateExperience(state, { type: 'scrub', timeMs: state.endTimeMs - 86400000 / 4 });
+  state = updateExperience(state, { type: 'play' });
+  state = updateExperience(state, { type: 'advance', realSeconds: 20 });
+  expect(state.currentTimeMs).toBe(state.endTimeMs);
+  expect(state.isPlaying).toBe(false);
+  expect(state.journeyComplete).toBe(true);
+  expect(state.presentation.kind === 'heliosphere' && state.presentation.phaseSeconds).toBe(0.25);
+  expect(updateExperience(state, { type: 'advance', realSeconds: 100 })).toBe(state);
+});
+
+it('retains nonzero inactive Galactic progress and speed through Heliosphere playback and Back', () => {
+  let state = createInitialExperienceState(TODAY);
+  state = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
+  state = updateExperience(state, { type: 'scrub-galactic', elapsedMillionYears: 42 });
+  state = updateExperience(state, { type: 'set-galactic-speed', speed: 25 });
+  state = updateExperience(state, { type: 'set-frame', frame: 'space' });
+  state = updateExperience(state, { type: 'enter-heliosphere' });
+  state = updateExperience(state, { type: 'play' });
+  state = updateExperience(state, { type: 'advance', realSeconds: 5 });
+  state = updateExperience(state, { type: 'leave-heliosphere' });
+  state = updateExperience(state, { type: 'set-frame', frame: 'galaxy' });
+  expect(state.galacticElapsedMillionYears).toBe(42);
+  expect(state.galacticSpeed).toBe(25);
+  expect(state.isPlaying).toBe(false);
 });

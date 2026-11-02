@@ -53,6 +53,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run build
       - run: npx playwright install --with-deps chromium firefox webkit
       - name: Run browser smoke tests
         run: xvfb-run -a npm run test:e2e

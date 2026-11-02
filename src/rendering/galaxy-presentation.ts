@@ -15,17 +15,29 @@ export class GalaxyPresentation {
   readonly root = new THREE.Group();
   readonly sunMarker: THREE.Mesh;
 
-  private readonly stars: THREE.Points;
-  private readonly diskMaterial: THREE.MeshBasicMaterial;
-  private readonly hazeMaterial: THREE.MeshBasicMaterial;
-  private readonly sunCorona: THREE.Sprite;
-  private readonly directionArrow: THREE.ArrowHelper;
-  private readonly orbitProgress: THREE.Line;
+  private stars?: THREE.Points;
+  private diskMaterial?: THREE.MeshBasicMaterial;
+  private hazeMaterial?: THREE.MeshBasicMaterial;
+  private sunCorona?: THREE.Sprite;
+  private directionArrow?: THREE.ArrowHelper;
+  private orbitProgress?: THREE.Line;
+  private initialized = false;
+  private disposed = false;
+  private readonly textures: THREE.Texture[] = [];
   private coronaTime = 0;
   private lastAnimationAt = performance.now();
 
   constructor() {
+    this.root.visible = false;
+    this.sunMarker = new THREE.Mesh();
+    this.sunMarker.position.set(65, 0, 0);
+    this.root.add(this.sunMarker);
+  }
+
+  private initialize(): void {
+    this.initialized = true;
     const galaxyTexture = createGalaxyTexture();
+    this.textures.push(galaxyTexture);
     this.diskMaterial = new THREE.MeshBasicMaterial({
       map: galaxyTexture,
       transparent: true,
@@ -112,13 +124,14 @@ export class GalaxyPresentation {
     );
     this.root.add(this.orbitProgress);
 
-    this.sunMarker = new THREE.Mesh(
-      new THREE.SphereGeometry(1.05, 24, 12),
-      new THREE.MeshBasicMaterial({ color: 0xffcf7b }),
-    );
-    this.sunMarker.position.set(65, 0, 0);
+    this.sunMarker.geometry.dispose();
+    (this.sunMarker.material as THREE.Material).dispose();
+    this.sunMarker.geometry = new THREE.SphereGeometry(1.05, 24, 12);
+    this.sunMarker.material = new THREE.MeshBasicMaterial({ color: 0xffcf7b });
+    const glowTexture = createGlowTexture();
+    this.textures.push(glowTexture);
     this.sunCorona = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: createGlowTexture(),
+      map: glowTexture,
       color: 0xffb55c,
       opacity: 0.58,
       transparent: true,
@@ -140,27 +153,49 @@ export class GalaxyPresentation {
   }
 
   render(state: GalaxyPresentationState): void {
+    if (this.disposed) return;
+    const elapsedSeconds = Math.min(0.05, Math.max(0, (state.nowMs - this.lastAnimationAt) / 1_000));
+    this.lastAnimationAt = state.nowMs;
+    if (!state.reducedMotion) this.coronaTime += elapsedSeconds * 0.45;
     this.root.visible = state.visible;
+    if (!state.visible) return;
+    if (!this.initialized) this.initialize();
+    const { directionArrow, orbitProgress, stars, diskMaterial, hazeMaterial, sunCorona } = this;
+    if (!directionArrow || !orbitProgress || !stars || !diskMaterial || !hazeMaterial || !sunCorona) return;
     const progress = Math.min(1, Math.max(0, state.progress));
     const angle = progress * Math.PI * 2;
     const markerPosition = new THREE.Vector3(Math.cos(angle) * 65, 0, Math.sin(angle) * 65);
     this.sunMarker.position.copy(markerPosition);
-    this.directionArrow.position.copy(markerPosition);
-    this.directionArrow.setDirection(new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle)));
-    this.orbitProgress.visible = progress > 0;
-    this.orbitProgress.geometry.setDrawRange(0, Math.floor(progress * 360) + 1);
+    directionArrow.position.copy(markerPosition);
+    directionArrow.setDirection(new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle)));
+    orbitProgress.visible = progress > 0;
+    orbitProgress.geometry.setDrawRange(0, Math.floor(progress * 360) + 1);
 
-    this.stars.geometry.setDrawRange(0, state.quality.galaxyStarCount);
-    this.diskMaterial.opacity = state.quality.galaxyDiskOpacity;
-    this.hazeMaterial.opacity = state.quality.galaxyHazeOpacity;
-    if (this.sunCorona.material instanceof THREE.SpriteMaterial) {
-      this.sunCorona.material.opacity = state.quality.galaxyCoronaOpacity;
+    stars.geometry.setDrawRange(0, state.quality.galaxyStarCount);
+    diskMaterial.opacity = state.quality.galaxyDiskOpacity;
+    hazeMaterial.opacity = state.quality.galaxyHazeOpacity;
+    if (sunCorona.material instanceof THREE.SpriteMaterial) {
+      sunCorona.material.opacity = state.quality.galaxyCoronaOpacity;
     }
-    const elapsedSeconds = Math.min(0.05, Math.max(0, (state.nowMs - this.lastAnimationAt) / 1_000));
-    this.lastAnimationAt = state.nowMs;
-    if (!state.reducedMotion) this.coronaTime += elapsedSeconds * 0.45;
     const pulse = state.reducedMotion ? 1 : 1 + Math.sin(this.coronaTime) * 0.035;
     const scale = state.quality.galaxyCoronaScale * pulse;
-    this.sunCorona.scale.set(scale, scale, 1);
+    sunCorona.scale.set(scale, scale, 1);
+  }
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    this.root.traverse((object) => {
+      if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Points || object instanceof THREE.Sprite) {
+        geometries.add(object.geometry);
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material);
+      }
+    });
+    for (const geometry of geometries) geometry.dispose();
+    for (const material of materials) material.dispose();
+    for (const texture of this.textures) texture.dispose();
+    this.root.clear();
+    this.root.removeFromParent();
   }
 }

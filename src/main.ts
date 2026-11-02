@@ -10,30 +10,26 @@ import {
 } from './astronomy/solar-system';
 import {
   createInitialExperienceState,
+  selectedBody,
   getAlongPathMotion,
   getGalacticOrbitPresentation,
   updateExperience,
+  transitionExperience,
   type ExperienceAction,
   type ExperienceState,
 } from './experience/experience-state';
 import { applyCurrentTourChapter } from './experience/tour';
+import { parsePreferences, type SavedPreferences } from './interface/preferences';
 import { AppInterface } from './interface/app-interface';
 import { decodeSharedView, encodeSharedView } from './interface/url-state';
 import { OrbitalScene } from './rendering/orbital-scene';
 
 const PREFERENCES_KEY = 'orbital-journey:preferences:v1';
 
-interface SavedPreferences {
-  readonly reducedMotion?: boolean;
-  readonly quality?: ExperienceState['quality'];
-  readonly labels?: boolean;
-  readonly trails?: boolean;
-}
-
 function readPreferences(): SavedPreferences {
   try {
     const stored = window.localStorage.getItem(PREFERENCES_KEY);
-    return stored ? (JSON.parse(stored) as SavedPreferences) : {};
+    return stored ? parsePreferences(JSON.parse(stored)) : {};
   } catch {
     return {};
   }
@@ -90,8 +86,9 @@ function createOrbitPaths(instant: Date): Readonly<Record<PlanetId, readonly Vec
 }
 
 const initialToday = new Date();
-let state = applyPreferences(createInitialExperienceState(initialToday), readPreferences());
-if (window.matchMedia('(prefers-reduced-motion: reduce)').matches && !readPreferences().reducedMotion) {
+const preferences = readPreferences();
+let state = applyPreferences(createInitialExperienceState(initialToday), preferences);
+if (window.matchMedia('(prefers-reduced-motion: reduce)').matches && preferences.reducedMotion === undefined) {
   state = updateExperience(state, { type: 'set-reduced-motion', enabled: true });
 }
 
@@ -118,7 +115,7 @@ const appInterface = new AppInterface({
   onShare: () => void shareCurrentView(),
   onFocus: (body) => {
     dispatch({ type: 'focus-camera' });
-    if (!state.gravityReturn && (state.frame === 'galaxy' || state.cameraBookmark === 'full')) {
+    if (state.presentation.kind === 'scientific' && (state.frame === 'galaxy' || state.cameraBookmark === 'full')) {
       dispatch({ type: 'set-frame', frame: 'space' });
       dispatch({ type: 'set-bookmark', bookmark: 'path' });
     }
@@ -131,6 +128,7 @@ const appInterface = new AppInterface({
     dispatch({ type: 'reset-camera' });
     scene?.resetCamera();
   },
+  onNavigateCamera: (command) => scene?.navigateCamera(command),
   onReturnHome: () => dispatch({ type: 'return-home' }),
 });
 
@@ -141,7 +139,7 @@ try {
     canvas: document.getElementById('space-canvas') as HTMLCanvasElement,
     labelLayer: document.getElementById('label-layer') as HTMLElement,
     assetBase: import.meta.env.BASE_URL,
-    onSelect: (body) => dispatch({ type: 'select', body }),
+    onSelect: (selection) => selection.kind === 'region' ? dispatch({ type: 'select-region', region: selection.region }) : dispatch({ type: 'select', body: selection.body }),
     onQualityAdapted: (quality) => {
       dispatch({ type: 'set-quality', quality });
       appInterface.showToast(`Visual quality adjusted to ${quality} to keep motion smooth.`);
@@ -154,9 +152,20 @@ try {
 }
 
 function dispatch(action: ExperienceAction): void {
+  const inputAt = performance.now();
+  if (state.presentation.kind === 'heliosphere' &&
+      ['play', 'pause', 'set-reduced-motion', 'set-speed', 'scrub', 'replay-solar'].includes(action.type) &&
+      transitionExperience(state, action).state !== state) {
+    const elapsed = Math.max(0, (inputAt - lastAnimationTime) / 1000);
+    lastAnimationTime = inputAt;
+    // Settle the interval under the pre-input permissions and speed. The next
+    // RAF then charges only the interval following this accepted input.
+    if (state.isPlaying) dispatch({ type: 'advance', realSeconds: elapsed });
+  }
   const previousState = state;
   const previousTourKey = `${state.tour.status}:${state.tour.chapter}`;
-  let next = updateExperience(state, action);
+  const transition = transitionExperience(state, action);
+  let next = transition.state;
   const nextTourKey = `${next.tour.status}:${next.tour.chapter}`;
   if (nextTourKey !== previousTourKey && next.tour.status === 'running') {
     next = applyCurrentTourChapter(next);
@@ -166,6 +175,10 @@ function dispatch(action: ExperienceAction): void {
     persistPreferences(state);
   }
   const now = performance.now();
+  if (transition.handoff) {
+    if (transition.handoff.presentation === 'heliosphere') lastAnimationTime = inputAt;
+    scene?.handlePresentationHandoff(transition.handoff, state, now);
+  }
   if (
     action.type !== 'advance' ||
     now - lastInterfaceRenderAt >= 100 ||
@@ -174,11 +187,12 @@ function dispatch(action: ExperienceAction): void {
   ) {
     lastInterfaceRenderAt = now;
     renderInterface();
+    if (transition.handoff) appInterface.handlePresentationHandoff(transition.handoff);
   }
   if (previousState.followedPlanet !== state.followedPlanet) {
     if (state.followedPlanet) {
       const name = getPlanetProfile(state.followedPlanet).name;
-      const movedFromFullJourney = !state.gravityReturn && previousState.frame === 'space' && previousState.cameraBookmark === 'full';
+      const movedFromFullJourney = state.presentation.kind === 'scientific' && previousState.frame === 'space' && previousState.cameraBookmark === 'full';
       appInterface.showToast(movedFromFullJourney
         ? `Switched to the Along the Path camera to follow ${name}.`
         : `Camera is now following ${name}.`);
@@ -191,14 +205,15 @@ function dispatch(action: ExperienceAction): void {
 
 function renderInterface(): void {
   appInterface.render(state, getAlongPathMotion(state));
-  if (state.selectedBody && state.selectedBody !== 'sun') {
+  const body = selectedBody(state);
+  if (body && body !== 'sun') {
     const instant = new Date(state.currentTimeMs);
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
-      state.gravityReturn || state.frame === 'sun' ? 'sun' : 'space',
+      state.presentation.kind !== 'scientific' || state.frame === 'sun' ? 'sun' : 'space',
     );
-    const planet = snapshot.planets.find(({ id }) => id === state.selectedBody);
+    const planet = snapshot.planets.find(({ id }) => id === body);
     if (planet) {
       const distanceAu = Math.hypot(
         planet.position.x - snapshot.sun.x,
@@ -206,9 +221,9 @@ function renderInterface(): void {
         planet.position.z - snapshot.sun.z,
       );
       appInterface.renderPlanet({
-        profile: getPlanetProfile(state.selectedBody),
+        profile: getPlanetProfile(body),
         distanceAu,
-        speedKmPerSecond: calculateOrbitalSpeedKmPerSecond(state.selectedBody, instant),
+        speedKmPerSecond: calculateOrbitalSpeedKmPerSecond(body, instant),
       });
     }
   } else {
@@ -217,14 +232,15 @@ function renderInterface(): void {
 }
 
 async function shareCurrentView(): Promise<void> {
-  if (state.gravityReturn) {
+  if (state.presentation.kind !== 'scientific') {
     appInterface.showToast('Sharing is unavailable in this session-only schematic. Use Back to share a scientific view.');
     return;
   }
   const params = encodeSharedView({
+    presentation: state.presentation,
     timeMs: state.currentTimeMs,
     frame: state.frame,
-    selectedBody: state.selectedBody,
+    selectedBody: selectedBody(state),
     cameraBookmark: state.cameraBookmark,
   });
   const url = new URL(window.location.href);
@@ -251,8 +267,17 @@ function rotationsAt(instant: Date): Readonly<Record<PlanetId, number>> {
   };
 }
 
+function syncVisibility(): void {
+  lastAnimationTime = performance.now();
+  dispatch({ type: 'set-page-visible', visible: !document.hidden });
+}
+document.addEventListener('visibilitychange', syncVisibility);
+syncVisibility();
+
 function animate(now: number): void {
-  const elapsedSeconds = Math.min(0.1, Math.max(0, (now - lastAnimationTime) / 1_000));
+  if (state.pageVisible === document.hidden) syncVisibility();
+  const realSeconds = Math.max(0, (now - lastAnimationTime) / 1_000);
+  const elapsedSeconds = state.presentation.kind === 'heliosphere' ? realSeconds : Math.min(0.1, realSeconds);
   lastAnimationTime = now;
   if (state.isPlaying) dispatch({ type: 'advance', realSeconds: elapsedSeconds });
 
@@ -261,19 +286,22 @@ function animate(now: number): void {
     const snapshot = calculateSystemSnapshot(
       instant,
       new Date(state.startTimeMs),
-      state.gravityReturn || state.frame === 'sun' ? 'sun' : 'space',
+      state.presentation.kind !== 'scientific' || state.frame === 'sun' ? 'sun' : 'space',
     );
     const galacticPresentation = getGalacticOrbitPresentation(state);
     scene.render(
       {
         snapshot,
-        gravity: state.gravityReturn !== null,
+        gravity: state.presentation.kind === 'gravity',
+        heliosphere: state.presentation.kind === 'heliosphere',
         frame: state.frame,
         bookmark: state.cameraBookmark,
         cameraRevision: state.cameraRevision,
-        selectedBody: state.selectedBody,
+        selectedBody: selectedBody(state),
         followedPlanet: state.followedPlanet,
-        viewOptions: state.viewOptions,
+        heliospherePhaseSeconds: state.presentation.kind === 'heliosphere' ? state.presentation.phaseSeconds : undefined,
+        heliosphereLayers: state.presentation.kind === 'heliosphere' ? state.presentation.layers : undefined,
+        viewOptions: state.presentation.kind === 'heliosphere' ? { orbitPaths: state.presentation.layers.orbitPaths, labels: state.presentation.layers.labels, trails: false, planeOverlays: false } : state.viewOptions,
         quality: state.quality,
         reducedMotion: state.reducedMotion,
         rotations: rotationsAt(instant),

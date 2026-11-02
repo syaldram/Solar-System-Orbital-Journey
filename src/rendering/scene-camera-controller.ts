@@ -2,13 +2,15 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import type { PlanetId } from '../astronomy/solar-system';
-import type { CameraBookmark, SelectableBody, ViewMode } from '../experience/experience-state';
+import type { CameraBookmark, PresentationHandoff, SelectableBody, ViewMode } from '../experience/experience-state';
+import { HELIOSPHERE_EXTENT } from './heliosphere-mapping';
 import { SUN_DISPLAY_RADIUS, planetDisplayRadius } from './display-scale';
 
 const CAMERA_TWEEN_DURATION_MS = 800;
 
 export interface SceneCameraState {
   readonly gravity?: boolean;
+  readonly heliosphere?: boolean;
   readonly bookmark: CameraBookmark;
   readonly cameraRevision: number;
   readonly followedPlanet: PlanetId | null;
@@ -16,11 +18,12 @@ export interface SceneCameraState {
   readonly reducedMotion: boolean;
 }
 
+export type CameraNavigation = 'orbit-left' | 'orbit-right' | 'orbit-up' | 'orbit-down' | 'pan-left' | 'pan-right' | 'pan-up' | 'pan-down' | 'zoom-in' | 'zoom-out';
+
 export class SceneCameraController {
   readonly controls: OrbitControls;
 
-  private gravity = false;
-  private returnPose: { position: THREE.Vector3; target: THREE.Vector3; revision: number } | null = null;
+  private returnPose: { position: THREE.Vector3; target: THREE.Vector3; sessionId: number } | null = null;
   private currentState: SceneCameraState | null = null;
   private currentBookmark: CameraBookmark | null = null;
   private currentFrame: ViewMode | null = null;
@@ -59,33 +62,95 @@ export class SceneCameraController {
   }
 
   render(state: SceneCameraState, nowMs: number): void {
-    const handoff = Boolean(state.gravity) !== this.gravity;
-    if (handoff) {
-      // Flush damping before capturing or restoring a camera, then cancel all moves.
-      this.controls.enableDamping = false;
-      this.controls.update();
-      this.controls.enableDamping = true;
-      if (state.gravity) this.returnPose = { position: this.camera.position.clone(), target: this.controls.target.clone(), revision: state.cameraRevision };
-      this.pendingFocus = null;
-      this.cameraTween = null;
-      this.lastFollowPosition = null;
-      this.currentCameraRevision = -1;
-      this.gravity = Boolean(state.gravity);
-    }
     this.currentState = state;
     this.syncFollowState(state.followedPlanet);
     this.applyConstraints(state.frame);
     this.applyComposition(state, nowMs);
-    if (handoff && !state.gravity && this.returnPose && state.cameraRevision === this.returnPose.revision) {
-      this.cameraTween = null;
-      this.camera.position.copy(this.returnPose.position);
-      this.controls.target.copy(this.returnPose.target);
-    }
-    if (handoff && !state.gravity) this.returnPose = null;
     this.applyPendingFocus(nowMs);
     this.updateTween(state.reducedMotion, nowMs);
     this.applyFollow(state.followedPlanet, state.frame);
     this.controls.update();
+    if (state.heliosphere) this.preventBodyClipping();
+  }
+
+  handlePresentationHandoff(handoff: PresentationHandoff, state: SceneCameraState, nowMs: number): void {
+    if (handoff.kind === 'enter' ? this.returnPose !== null : this.returnPose?.sessionId !== handoff.sessionId) return;
+
+    // Preserve the visible pose before draining OrbitControls' private damping deltas.
+    const position = this.camera.position.clone();
+    const target = this.controls.target.clone();
+    const damping = this.controls.enableDamping;
+    this.controls.enableDamping = false;
+    this.controls.update();
+    this.camera.position.copy(position);
+    this.controls.target.copy(target);
+    this.controls.update();
+    this.controls.enableDamping = damping;
+    this.pendingFocus = null;
+    this.cameraTween = null;
+    this.lastFollowPosition = null;
+    this.followedPlanet = null;
+    this.currentState = state;
+    this.applyConstraints(state.frame);
+
+    if (handoff.kind === 'enter') {
+      this.returnPose = { position, target, sessionId: handoff.sessionId };
+    } else if (handoff.kind === 'back' && this.returnPose) {
+      this.camera.position.copy(this.returnPose.position);
+      this.controls.target.copy(this.returnPose.target);
+      // A later render must not compose over the restored arbitrary camera pose.
+      this.currentBookmark = state.bookmark;
+      this.currentFrame = state.frame;
+      this.currentCameraRevision = state.cameraRevision;
+    }
+    if (handoff.kind !== 'back') {
+      this.currentCameraRevision = -1;
+      this.applyComposition(state, nowMs);
+      this.updateTween(state.reducedMotion, nowMs);
+    }
+    if (handoff.kind !== 'enter') this.returnPose = null;
+    this.controls.update();
+  }
+
+  navigate(command: CameraNavigation): void {
+    this.cameraTween = null;
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const distance = offset.length();
+    if (command.startsWith('orbit-')) {
+      const spherical = new THREE.Spherical().setFromVector3(offset);
+      if (command === 'orbit-left') spherical.theta -= 0.15;
+      if (command === 'orbit-right') spherical.theta += 0.15;
+      if (command === 'orbit-up') spherical.phi -= 0.15;
+      if (command === 'orbit-down') spherical.phi += 0.15;
+      spherical.phi = THREE.MathUtils.clamp(spherical.phi, this.controls.minPolarAngle, this.controls.maxPolarAngle);
+      this.camera.position.copy(this.controls.target).add(new THREE.Vector3().setFromSpherical(spherical));
+    } else if (command.startsWith('zoom-')) {
+      offset.setLength(THREE.MathUtils.clamp(distance * (command === 'zoom-in' ? 0.8 : 1.25), this.controls.minDistance, this.controls.maxDistance));
+      this.camera.position.copy(this.controls.target).add(offset);
+    } else {
+      this.camera.updateMatrixWorld();
+      const direction = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, command === 'pan-left' || command === 'pan-right' ? 0 : 1);
+      direction.multiplyScalar(distance * 0.08 * (command === 'pan-left' || command === 'pan-down' ? -1 : 1));
+      this.camera.position.add(direction);
+      this.controls.target.add(direction);
+    }
+    this.controls.update();
+    if (this.currentState?.heliosphere) this.preventBodyClipping();
+  }
+
+  private preventBodyClipping(): void {
+    for (const [body, object] of [['sun', this.sun], ...this.planets.entries()] as const) {
+      if (!object.visible) continue;
+      const center = object.getWorldPosition(new THREE.Vector3());
+      const scale = object.getWorldScale(new THREE.Vector3());
+      const radius = (body === 'sun' ? SUN_DISPLAY_RADIUS : planetDisplayRadius(body)) * Math.max(scale.x, scale.y, scale.z) * (body === 'saturn' ? 2.35 : body === 'uranus' ? 2.05 : 1.25) + this.camera.near;
+      const offset = this.camera.position.clone().sub(center);
+      if (offset.length() < radius) {
+        if (offset.lengthSq() === 0) offset.set(0, 1, 0);
+        this.camera.position.copy(center).add(offset.setLength(radius));
+      }
+    }
+    this.camera.lookAt(this.controls.target);
   }
 
   focus(body: SelectableBody): void {
@@ -93,6 +158,12 @@ export class SceneCameraController {
   }
 
   reset(): void {
+    if (this.currentState?.heliosphere) {
+      const damping = this.controls.enableDamping;
+      this.controls.enableDamping = false;
+      this.controls.update();
+      this.controls.enableDamping = damping;
+    }
     this.lastFollowPosition = null;
     this.pendingFocus = null;
     this.currentCameraRevision = -1;
@@ -111,7 +182,11 @@ export class SceneCameraController {
     let position = new THREE.Vector3(18, 28, 70);
     let target = new THREE.Vector3(0, 0, 0);
     const narrowViewport = this.camera.aspect < 0.72;
-    if (state.gravity) {
+    if (state.heliosphere) {
+      position = narrowViewport ? new THREE.Vector3(-60, 530, 950) : new THREE.Vector3(70, 220, 440);
+      target = new THREE.Vector3(-65, -10, 0);
+      position = this.fitCutaway(position, target);
+    } else if (state.gravity) {
       position = narrowViewport ? new THREE.Vector3(0, 300, 600) : new THREE.Vector3(115, 135, 225);
       target = new THREE.Vector3(0, -7, 0);
     } else if (state.frame === 'galaxy') {
@@ -148,14 +223,34 @@ export class SceneCameraController {
       position,
       target,
       nowMs,
-      state.reducedMotion || isInitialComposition || Boolean(state.gravity),
+      state.reducedMotion || isInitialComposition || Boolean(state.gravity || state.heliosphere),
       'composition',
     );
   }
 
+  private fitCutaway(position: THREE.Vector3, target: THREE.Vector3): THREE.Vector3 {
+    // Fit the outer shell's conservative bounds in camera space with a small margin.
+    const direction = position.clone().sub(target).normalize();
+    const orientation = new THREE.Matrix4().lookAt(position, target, this.camera.up);
+    const right = new THREE.Vector3().setFromMatrixColumn(orientation, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(orientation, 1);
+    const tanVertical = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * 0.94;
+    const tanHorizontal = tanVertical * this.camera.aspect;
+    let distance = position.distanceTo(target);
+    for (const x of [-HELIOSPHERE_EXTENT * 2.5, HELIOSPHERE_EXTENT]) {
+      for (const y of [-HELIOSPHERE_EXTENT * 0.85, 0]) {
+        for (const z of [-HELIOSPHERE_EXTENT, HELIOSPHERE_EXTENT]) {
+          const point = new THREE.Vector3(x, y, z).sub(target);
+          distance = Math.max(distance, point.dot(direction) + Math.max(Math.abs(point.dot(right)) / tanHorizontal, Math.abs(point.dot(up)) / tanVertical));
+        }
+      }
+    }
+    return target.clone().addScaledVector(direction, distance);
+  }
+
   private applyPendingFocus(nowMs: number): void {
     if (!this.pendingFocus || !this.currentState) return;
-    const isWideView = !this.currentState.gravity && (this.currentState.frame === 'galaxy'
+    const isWideView = !(this.currentState.gravity || this.currentState.heliosphere) && (this.currentState.frame === 'galaxy'
       || (this.currentState.frame === 'space' && this.currentState.bookmark === 'full'));
     if (isWideView) return;
     const { body, source } = this.pendingFocus;

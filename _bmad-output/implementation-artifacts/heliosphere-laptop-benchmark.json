@@ -1,0 +1,138 @@
+{
+  "recordedAt": "2026-10-30T15:24:29.220Z",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "25.6.0",
+    "cpu": "Apple M4 Pro",
+    "memoryGiB": 48,
+    "hostnameRecorded": false
+  },
+  "browser": "156.0.8078.74",
+  "channel": "chrome",
+  "headless": true,
+  "graphics": {
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+    "vendor": "Google Inc. (Apple)",
+    "dpr": 2
+  },
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "requestedDpr": 2,
+  "canvasBacking": {
+    "width": 2880,
+    "height": 1800,
+    "cssWidth": 1440,
+    "cssHeight": 900,
+    "ratioX": 2,
+    "ratioY": 2
+  },
+  "requestedQuality": "auto",
+  "startingQualityPreference": "auto",
+  "startingQualityTier": "high",
+  "observedQualityTiers": [
+    "high"
+  ],
+  "qualityTransitions": [],
+  "endingQualityPreference": "auto",
+  "resolvedQualityTier": "high",
+  "workload": "Requested Heliosphere overview with all layers and planetary/decorative playback; raw workloadChecks determine observation validity",
+  "workloadChecks": {
+    "beforeObservation": {
+      "heliosphere": true,
+      "qualityPreference": "auto",
+      "resolvedQualityTier": "high",
+      "visibilityState": "visible",
+      "playing": "true",
+      "date": "Aug 28, 2027",
+      "reducedMotion": false,
+      "layers": {
+        "outerHeliosphere": true,
+        "terminationShock": true,
+        "orbitPaths": true,
+        "labels": true
+      },
+      "contextLost": false
+    },
+    "afterObservation": {
+      "heliosphere": true,
+      "qualityPreference": "auto",
+      "resolvedQualityTier": "high",
+      "visibilityState": "visible",
+      "playing": "true",
+      "date": "Feb 27, 2030",
+      "reducedMotion": false,
+      "layers": {
+        "outerHeliosphere": true,
+        "terminationShock": true,
+        "orbitPaths": true,
+        "labels": true
+      },
+      "contextLost": false
+    },
+    "checkedFrames": 1802,
+    "interruptions": [],
+    "dateAdvanced": true,
+    "valid": true
+  },
+  "warmupMs": 10000,
+  "requestedDurationMs": 30000,
+  "observationDeadlineMs": 45000,
+  "actualDurationMs": 30015.399999999998,
+  "method": "Uncontended browser requestAnimationFrame intervals with per-frame native control checks and visibility/context event observation; no app instrumentation. Distribution includes stalls.",
+  "samples": 1801,
+  "averageFps": 60.002532033556115,
+  "frameMs": {
+    "p50": 16.69999999999709,
+    "p95": 16.700000000004366,
+    "p99": 16.799999999999272,
+    "max": 16.80000000000291
+  },
+  "oneSecondWindowFps": {
+    "min": 60,
+    "max": 60.00983767830792,
+    "values": [
+      60,
+      60.00393468424157,
+      60,
+      60,
+      60.00393468424157,
+      60.00983767830792,
+      60,
+      60,
+      60,
+      60.00393468424168,
+      60.00393468424146,
+      60,
+      60,
+      60.00393468424168,
+      60.00393468424146,
+      60,
+      60.00393468424168,
+      60.00393468424168,
+      60,
+      60,
+      60.00983767830792,
+      60,
+      60.00393468424168,
+      60,
+      60.003934684241244,
+      60,
+      60,
+      60.00393468424168,
+      60.00393468424168
+    ]
+  },
+  "errors": [],
+  "failedResponses": [],
+  "consoleErrors": [],
+  "faviconProbes": [
+    {
+      "path": "/favicon.ico",
+      "status": 204
+    }
+  ],
+  "limitations": "Local automated laptop RAF observation; not physical phone FPS, manual Safari, remote CI or deployed-site evidence."
+}

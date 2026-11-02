@@ -1,3 +1,4 @@
+import { defaultHeliosphereLayers, type HeliosphereLayers, type Selection } from '../experience/experience-state';
 import * as THREE from 'three';
 
 import { PLANET_IDS, getPlanetProfile } from '../astronomy/planet-data';
@@ -6,6 +7,8 @@ import { eclipticToGalactic, type SystemSnapshot } from '../astronomy/reference-
 import type {
   AlongPathMotion,
   CameraBookmark,
+  ExperienceState,
+  PresentationHandoff,
   QualityPreference,
   SelectableBody,
   ViewMode,
@@ -33,10 +36,18 @@ import { AdaptiveQualityMonitor } from './adaptive-quality-monitor';
 import { getRenderingQualityProfile } from './quality-profile';
 import { GravityPresentation } from './gravity-presentation';
 import { compressGravityPosition, gravityCenters, gravityBodyPosition, gravityBodyRadius, gravitySurfaceHeight, GRAVITY_SUN_RADIUS } from './gravity-mapping';
+import { HeliospherePresentation, heliosphereHitStrength } from './heliosphere-presentation';
+import { HeliosphereBackground } from './heliosphere-background';
+import { HeliosphereTravelPresentation } from './heliosphere-travel-presentation';
+import { mapHeliospherePosition, heliosphereBodyRadius, HELIOSPHERE_SUN_RADIUS } from './heliosphere-mapping';
+import type { CameraNavigation } from './scene-camera-controller';
 import { SolarPresentation } from './solar-presentation';
 
 export interface SceneState {
   readonly gravity: boolean;
+  readonly heliosphere: boolean;
+  readonly heliospherePhaseSeconds?: number;
+  readonly heliosphereLayers?: HeliosphereLayers;
   readonly snapshot: SystemSnapshot;
   readonly frame: ViewMode;
   readonly bookmark: CameraBookmark;
@@ -58,7 +69,7 @@ export interface OrbitalSceneOptions {
   readonly canvas: HTMLCanvasElement;
   readonly labelLayer: HTMLElement;
   readonly assetBase: string;
-  readonly onSelect: (body: SelectableBody) => void;
+  readonly onSelect: (selection: Exclude<Selection, { kind: 'none' }>) => void;
   readonly onQualityAdapted: (quality: Exclude<QualityPreference, 'auto'>) => void;
 }
 
@@ -75,6 +86,12 @@ function toSceneVector(position: Vector3Au, scale = AU_SCALE): THREE.Vector3 {
 
 
 export class OrbitalScene {
+  private readonly heliosphereBackground = new HeliosphereBackground();
+  private readonly heliosphereTravel = new HeliosphereTravelPresentation();
+  private readonly heliospherePresentation = new HeliospherePresentation();
+  private readonly heliosphereOrbitLines = new Map<PlanetId, THREE.Line>();
+  private readonly heliosphereSpinOffsets = new Map<PlanetId, number>();
+  private heliosphereSpinActive = false;
   private readonly gravityPresentation = new GravityPresentation();
   private readonly gravityOrbitLines = new Map<PlanetId, THREE.Line>();
   private readonly gravityOrbitPoints = new Map<PlanetId, readonly { readonly x: number; readonly z: number }[]>();
@@ -100,7 +117,7 @@ export class OrbitalScene {
   private readonly starField: THREE.Points;
   private readonly earthClouds: THREE.Mesh | null;
   private readonly ringMaterials: readonly RingPresentationMaterial[];
-  private readonly onSelect: (body: SelectableBody) => void;
+  private readonly onSelect: (selection: Exclude<Selection, { kind: 'none' }>) => void;
   private readonly onQualityAdapted: (quality: Exclude<QualityPreference, 'auto'>) => void;
   private readonly qualityMonitor = new AdaptiveQualityMonitor();
   private readonly assetBase: string;
@@ -129,7 +146,7 @@ export class OrbitalScene {
 
     this.galaxyPresentation = new GalaxyPresentation();
     this.pathGuidePresentation = new PathGuidePresentation(options.labelLayer);
-    this.scene.add(this.gravityPresentation.root, this.solarGroup, this.pathGuidePresentation.root, this.galaxyPresentation.root);
+    this.scene.add(this.heliosphereBackground.root, this.heliosphereTravel.root, this.heliospherePresentation.root, this.gravityPresentation.root, this.solarGroup, this.pathGuidePresentation.root, this.galaxyPresentation.root);
     this.starField = this.createStarField();
     this.scene.add(this.starField);
 
@@ -167,10 +184,13 @@ export class OrbitalScene {
       galaxyRoot: this.galaxyPresentation.root,
       galaxySun: this.galaxyPresentation.sunMarker,
       planets: this.planetMeshes,
-    }, options.onSelect);
-    options.canvas.addEventListener('pointermove', (event) => this.handlePointerMove(event));
+    }, (body) => this.onSelect({ kind: 'body', body }));
+    const gesture = new SceneClickGesture();
+    options.canvas.addEventListener('pointerdown', (event) => gesture.down(event));
+    options.canvas.addEventListener('pointermove', (event) => { gesture.move(event); this.handlePointerMove(event); });
+    options.canvas.addEventListener('pointercancel', (event) => gesture.cancel(event.pointerId));
     options.canvas.addEventListener('pointerleave', () => this.sceneLabels.clearHover());
-    options.canvas.addEventListener('pointerup', (event) => this.handlePointer(event));
+    options.canvas.addEventListener('pointerup', (event) => { if (gesture.up(event)) this.handlePointer(event); });
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.loadTextures();
@@ -178,6 +198,14 @@ export class OrbitalScene {
 
   setOrbitPaths(paths: Readonly<Record<PlanetId, readonly Vector3Au[]>>): void {
     for (const id of PLANET_IDS) {
+      const mappedPoints = paths[id].map(mapHeliospherePosition);
+      const oldHeliosphere = this.heliosphereOrbitLines.get(id);
+      oldHeliosphere?.geometry.dispose();
+      (oldHeliosphere?.material as THREE.Material | undefined)?.dispose();
+      oldHeliosphere?.removeFromParent();
+      const mappedLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(mappedPoints.map(({ x, y, z }) => new THREE.Vector3(x, y, z))), new THREE.LineBasicMaterial({ color: getPlanetProfile(id).color, opacity: 0.45, transparent: true }));
+      this.heliosphereOrbitLines.set(id, mappedLine);
+      this.solarGroup.add(mappedLine);
       const gravityPoints = paths[id].map(compressGravityPosition);
       this.gravityOrbitPoints.set(id, gravityPoints);
       const existingGravity = this.gravityOrbitLines.get(id);
@@ -220,18 +248,27 @@ export class OrbitalScene {
 
   render(state: SceneState, nowMs: number): void {
     this.currentState = state;
+    if (!state.heliosphere || !state.rotationStabilized) this.heliosphereSpinActive = false;
     this.applyView(state);
+    this.heliosphereSpinActive = state.heliosphere && state.rotationStabilized;
+    if (state.heliosphere) {
+      this.heliospherePresentation.render(state.heliospherePhaseSeconds ?? 0);
+      this.heliosphereTravel.render(state.heliospherePhaseSeconds ?? 0);
+    }
     this.cameraController.render(state, nowMs);
+    this.heliosphereBackground.placeAroundCamera(this.camera.position);
     this.pathGuidePresentation.render({
-      frame: state.gravity ? 'sun' : state.frame,
-      bookmark: state.gravity ? 'inner' : state.bookmark,
+      frame: state.gravity || state.heliosphere ? 'sun' : state.frame,
+      bookmark: state.gravity || state.heliosphere ? 'inner' : state.bookmark,
       journeyProgress: state.journeyProgress,
       motion: state.pathMotion,
       quality: getRenderingQualityProfile(state.quality),
     }, nowMs);
     this.solarPresentation.render({
       nowMs,
-      reducedMotion: state.reducedMotion,
+      phaseSeconds: state.heliosphere ? state.heliospherePhaseSeconds ?? 0 : undefined,
+      frozen: state.heliosphere && (!state.pathMotion.isPlaying || state.reducedMotion),
+      reducedMotion: state.heliosphere ? false : state.reducedMotion,
       visible: state.frame !== 'galaxy',
       quality: getRenderingQualityProfile(state.quality),
     });
@@ -250,6 +287,27 @@ export class OrbitalScene {
     if (adaptedQuality) this.onQualityAdapted(adaptedQuality);
   }
 
+  handlePresentationHandoff(handoff: PresentationHandoff, state: ExperienceState, nowMs: number): void {
+    if (handoff.presentation === 'heliosphere') {
+      this.heliosphereSpinActive = false;
+      // A frozen baseline sample clears the prior explicit-phase offset even
+      // when Back and re-entry happen before a scientific frame can render.
+      this.solarPresentation.render({ nowMs, frozen: true, reducedMotion: false,
+        visible: state.frame !== 'galaxy', quality: getRenderingQualityProfile(state.quality) });
+    }
+    this.cameraController.handlePresentationHandoff(handoff, {
+      gravity: state.presentation.kind === 'gravity',
+      heliosphere: state.presentation.kind === 'heliosphere',
+      frame: state.frame,
+      bookmark: state.cameraBookmark,
+      cameraRevision: state.cameraRevision,
+      followedPlanet: state.followedPlanet,
+      reducedMotion: state.reducedMotion,
+    }, nowMs);
+  }
+
+  navigateCamera(command: CameraNavigation): void { this.cameraController.navigate(command); }
+
   focus(body: SelectableBody): void {
     this.cameraController.focus(body);
   }
@@ -259,7 +317,11 @@ export class OrbitalScene {
   }
 
   dispose(): void {
+    this.galaxyPresentation.dispose();
+    this.heliosphereBackground.dispose();
+    this.heliosphereTravel.dispose();
     this.gravityPresentation.dispose();
+    this.heliospherePresentation.dispose();
     this.cameraController.controls.dispose();
     this.scene.traverse((object) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Points) {
@@ -277,6 +339,7 @@ export class OrbitalScene {
     this.camera.aspect = width / Math.max(height, 1);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    if (this.currentState) this.applyQuality(this.currentState.quality, this.currentState.frame);
   }
 
   private createPlanet(id: PlanetId): void {
@@ -463,15 +526,19 @@ export class OrbitalScene {
 
   private applyView(state: SceneState): void {
     const isGalaxy = state.frame === 'galaxy';
-    const isFullJourney = !state.gravity && state.frame === 'space' && state.bookmark === 'full';
+    const isFullJourney = !(state.gravity || state.heliosphere) && state.frame === 'space' && state.bookmark === 'full';
+    this.heliospherePresentation.root.visible = state.heliosphere;
+    this.heliosphereBackground.root.visible = state.heliosphere;
+    this.heliosphereTravel.root.visible = state.heliosphere;
+    this.heliospherePresentation.setLayers(state.heliosphereLayers ?? defaultHeliosphereLayers());
     this.gravityPresentation.root.visible = state.gravity;
-    this.starField.visible = !state.gravity;
+    this.starField.visible = !(state.gravity || state.heliosphere);
     const centers = state.gravity ? gravityCenters(state.snapshot) : [];
     if (state.gravity) this.gravityPresentation.render(centers, getRenderingQualityProfile(state.quality));
     this.solarPresentation.root.position.set(0, state.gravity ? gravitySurfaceHeight(0, 0, centers) + GRAVITY_SUN_RADIUS * 0.75 : 0, 0);
-    this.solarPresentation.root.scale.setScalar(state.gravity ? GRAVITY_SUN_RADIUS / SUN_DISPLAY_RADIUS : 1);
+    this.solarPresentation.root.scale.setScalar(state.heliosphere ? HELIOSPHERE_SUN_RADIUS / SUN_DISPLAY_RADIUS : state.gravity ? GRAVITY_SUN_RADIUS / SUN_DISPLAY_RADIUS : 1);
     this.solarGroup.visible = !isGalaxy;
-    this.planeOverlay.visible = state.viewOptions.planeOverlays && !isFullJourney && !state.gravity;
+    this.planeOverlay.visible = state.viewOptions.planeOverlays && !isFullJourney && !(state.gravity || state.heliosphere);
 
     const positions = new Map(state.snapshot.planets.map(({ id, position }) => [id, position]));
     const sunPosition = state.snapshot.sun;
@@ -480,18 +547,26 @@ export class OrbitalScene {
       const tilt = this.planetTiltGroups.get(id);
       const absolute = positions.get(id);
       if (!mesh || !tilt || !absolute) continue;
-      const relative = state.frame === 'space'
+      const relative = state.frame === 'space' && !state.heliosphere && !state.gravity
         ? { x: absolute.x - sunPosition.x, y: absolute.y - sunPosition.y, z: absolute.z - sunPosition.z }
         : absolute;
       const center = centers.find((entry) => entry.id === id);
       if (center) {
         const mapped = gravityBodyPosition(center, centers);
         tilt.position.set(mapped.x, mapped.y, mapped.z);
+      } else if (state.heliosphere) {
+        const mapped = mapHeliospherePosition(relative);
+        tilt.position.set(mapped.x, mapped.y, mapped.z);
       } else tilt.position.copy(toSceneVector(relative));
-      tilt.scale.setScalar(state.gravity ? gravityBodyRadius(id) / planetDisplayRadius(id) : 1);
-      mesh.rotation.y = state.rotationStabilized && !(state.gravity && state.reducedMotion)
-        ? performance.now() * 0.00008
-        : state.rotations[id];
+      tilt.scale.setScalar(state.heliosphere ? heliosphereBodyRadius(id) / planetDisplayRadius(id) : state.gravity ? gravityBodyRadius(id) / planetDisplayRadius(id) : 1);
+      if (state.heliosphere) {
+        const phase = state.heliospherePhaseSeconds ?? 0;
+        if (state.rotationStabilized) {
+          if (!this.heliosphereSpinActive) this.heliosphereSpinOffsets.set(id, mesh.rotation.y - phase * 0.08);
+          mesh.rotation.y = (this.heliosphereSpinOffsets.get(id) ?? 0) + phase * 0.08;
+        } else mesh.rotation.y = state.rotations[id];
+      } else mesh.rotation.y = state.rotationStabilized && !(state.gravity && state.reducedMotion)
+        ? performance.now() * 0.00008 : state.rotations[id];
       mesh.visible = !isGalaxy;
     }
 
@@ -499,7 +574,7 @@ export class OrbitalScene {
       const journeyPosition = -FULL_JOURNEY_LENGTH / 2 + state.journeyProgress * FULL_JOURNEY_LENGTH;
       this.solarGroup.scale.setScalar(FULL_JOURNEY_GROUP_SCALE);
       this.solarGroup.position.set(0, 0, journeyPosition);
-    } else if (state.frame === 'space' && !state.gravity) {
+    } else if (state.frame === 'space' && !(state.gravity || state.heliosphere)) {
       this.solarGroup.scale.setScalar(1);
       this.solarGroup.position.set(0, 0, 0);
     } else {
@@ -507,7 +582,8 @@ export class OrbitalScene {
       this.solarGroup.position.set(0, 0, 0);
     }
 
-    for (const line of this.orbitLines.values()) line.visible = state.viewOptions.orbitPaths && state.frame === 'sun' && !state.gravity;
+    for (const line of this.heliosphereOrbitLines.values()) line.visible = state.heliosphere && state.viewOptions.orbitPaths;
+    for (const line of this.orbitLines.values()) line.visible = state.viewOptions.orbitPaths && state.frame === 'sun' && !(state.gravity || state.heliosphere);
     for (const line of this.spaceOrbitLines.values()) line.visible = state.viewOptions.orbitPaths && isFullJourney;
     for (const [id, line] of this.gravityOrbitLines) {
       line.visible = state.gravity && state.viewOptions.orbitPaths;
@@ -532,7 +608,7 @@ export class OrbitalScene {
     }
 
     const now = performance.now();
-    if (!state.gravity && state.viewOptions.trails && !state.reducedMotion && now - this.lastTrailSampleMs > 90) {
+    if (!(state.gravity || state.heliosphere) && state.viewOptions.trails && !state.reducedMotion && now - this.lastTrailSampleMs > 90) {
       for (const id of PLANET_IDS) {
         const position = positions.get(id);
         if (!position) continue;
@@ -547,8 +623,8 @@ export class OrbitalScene {
       const line = this.trailLines.get(id);
       const history = this.trailHistory.get(id) ?? [];
       if (!line) continue;
-      const isFullJourney = !state.gravity && state.frame === 'space' && state.bookmark === 'full';
-      line.visible = !state.gravity && state.viewOptions.trails && !state.reducedMotion && state.frame !== 'galaxy' && !isFullJourney;
+      const isFullJourney = !(state.gravity || state.heliosphere) && state.frame === 'space' && state.bookmark === 'full';
+      line.visible = !(state.gravity || state.heliosphere) && state.viewOptions.trails && !state.reducedMotion && state.frame !== 'galaxy' && !isFullJourney;
       if (!line.visible) continue;
       const points = history.map((position) => {
         if (state.frame !== 'space') return toSceneVector(position);
@@ -588,7 +664,7 @@ export class OrbitalScene {
       this.camera,
       width,
       height,
-      !state.gravity && state.frame === 'space' && state.bookmark === 'path',
+      !(state.gravity || state.heliosphere) && state.frame === 'space' && state.bookmark === 'path',
     );
   }
 
@@ -601,26 +677,22 @@ export class OrbitalScene {
     if (!this.currentState) return;
     const bounds = this.renderer.domElement.getBoundingClientRect();
     const markerHit = this.sceneLabels.hitTest(event.clientX, event.clientY, bounds);
-    if (markerHit) {
-      this.onSelect(markerHit);
-      return;
-    }
-    if (this.currentState.frame === 'galaxy') return;
     this.pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     this.pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const targets: THREE.Object3D[] = [this.solarPresentation.mesh, ...this.planetMeshes.values()];
-    const hit = this.raycaster.intersectObjects(targets, false)[0];
-    if (!hit) return;
-    const id = hit.object.userData.planetId as PlanetId | undefined;
-    this.onSelect(id ?? 'sun');
+    const targets: THREE.Object3D[] = this.currentState.frame === 'galaxy' ? [] : [this.solarPresentation.mesh, ...this.planetMeshes.values()];
+    const selection = resolveSceneSelection(this.raycaster, targets, this.heliospherePresentation.drawables, markerHit);
+    if (selection) this.onSelect(selection);
   }
 
   private applyQuality(preference: QualityPreference, frame: ViewMode): void {
     const quality = getRenderingQualityProfile(preference);
-    const qualityKey = `${preference}:${frame}:${window.devicePixelRatio}`;
+    const viewportWidth = this.renderer.domElement.clientWidth || window.innerWidth;
+    const qualityKey = `${preference}:${frame}:${window.devicePixelRatio}:${viewportWidth}`;
     if (qualityKey === this.appliedQualityKey) return;
     this.appliedQualityKey = qualityKey;
+    this.heliosphereBackground.setDensity(quality, viewportWidth);
+    this.heliosphereTravel.setDensity(quality, viewportWidth);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
     this.starField.geometry.setDrawRange(
       0,
@@ -633,4 +705,51 @@ export class OrbitalScene {
     }
   }
 
+}
+
+/** One activation resolves markers first (in handlePointer), then bodies, then
+ * strongest visible region envelope. Eligibility follows the drawable's actual ancestry. */
+export function isDisplayed(object: THREE.Object3D): boolean {
+  for (let current: THREE.Object3D | null = object; current; current = current.parent) {
+    if (!current.visible) return false;
+  }
+  return true;
+}
+export function resolveSceneSelection(
+  raycaster: THREE.Raycaster,
+  bodies: readonly THREE.Object3D[],
+  regions: HeliospherePresentation['drawables'],
+  marker: SelectableBody | null = null,
+): Exclude<Selection, { kind: 'none' }> | null {
+  if (marker) return { kind: 'body', body: marker };
+  const body = raycaster.intersectObjects(bodies.filter(isDisplayed), false)[0];
+  if (body) return { kind: 'body', body: body.object.userData.planetId as PlanetId | undefined ?? 'sun' };
+  const eligible = regions.filter(({ object }) => isDisplayed(object));
+  const hits = raycaster.intersectObjects(eligible.map(({ object }) => object), false);
+  // Translucent foregrounds must not swallow clicks on brighter inner limbs.
+  const hit = hits.reduce<THREE.Intersection | undefined>((best, candidate) =>
+    !best || heliosphereHitStrength(candidate, raycaster.ray) > heliosphereHitStrength(best, raycaster.ray) ? candidate : best, undefined);
+  const region = eligible.find(({ object }) => object === hit?.object)?.region;
+  return region ? { kind: 'region', region } : null;
+}
+
+/** A completed primary click/tap, never the release of a camera gesture. */
+class SceneClickGesture {
+  private readonly pointers = new Map<number, { x: number; y: number; eligible: boolean }>();
+  down(event: Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY' | 'button' | 'isPrimary'>): void {
+    const multiple = this.pointers.size > 0;
+    if (multiple) this.pointers.forEach((pointer) => { pointer.eligible = false; });
+    this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, eligible: !multiple && event.isPrimary && event.button === 0 });
+  }
+  move(event: Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY'>): void {
+    const pointer = this.pointers.get(event.pointerId);
+    if (pointer && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) pointer.eligible = false;
+  }
+  cancel(pointerId: number): void { this.pointers.delete(pointerId); }
+  up(event: Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY' | 'button'>): boolean {
+    this.move(event);
+    const pointer = this.pointers.get(event.pointerId);
+    this.pointers.delete(event.pointerId);
+    return Boolean(pointer?.eligible && event.button === 0);
+  }
 }

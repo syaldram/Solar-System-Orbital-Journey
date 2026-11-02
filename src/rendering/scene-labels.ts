@@ -17,6 +17,7 @@ interface SceneLabelObjects {
 
 export interface SceneLabelsState {
   readonly gravity?: boolean;
+  readonly heliosphere?: boolean;
   readonly frame: ViewMode;
   readonly bookmark: CameraBookmark;
   readonly selectedBody: SelectableBody | null;
@@ -78,7 +79,7 @@ export class SceneLabels {
     width: number,
     height: number,
   ): void {
-    const isFullJourney = !state.gravity && state.frame === 'space' && state.bookmark === 'full';
+    const isFullJourney = !(state.gravity || state.heliosphere) && state.frame === 'space' && state.bookmark === 'full';
     const fullSunScreen = new THREE.Vector2();
     if (isFullJourney) {
       const sunWorld = new THREE.Vector3();
@@ -110,7 +111,7 @@ export class SceneLabels {
       let y = actualY;
       const leader = marker.querySelector<HTMLElement>('.body-marker__leader');
       const name = marker.querySelector<HTMLElement>('.body-marker__name');
-      if (name && !state.gravity) { name.hidden = false; name.style.left = ''; name.style.top = ''; name.style.transform = ''; }
+      if (name && !(state.gravity || state.heliosphere)) { name.hidden = false; name.style.left = ''; name.style.top = ''; name.style.transform = ''; }
       if (isFullJourney && id !== 'sun') {
         const index = PLANET_IDS.indexOf(id);
         const actualDelta = new THREE.Vector2(actualX - fullSunScreen.x, actualY - fullSunScreen.y);
@@ -145,7 +146,7 @@ export class SceneLabels {
       );
       const projectedRadius = worldRadius * pixelsPerWorldUnit;
       const revealOnly = (isFullJourney && id !== 'sun')
-        || (!state.gravity && camera.position.distanceTo(cameraTarget) > 180 && ['mercury', 'venus', 'earth', 'mars'].includes(id));
+        || (!(state.gravity || state.heliosphere) && camera.position.distanceTo(cameraTarget) > 180 && ['mercury', 'venus', 'earth', 'mars'].includes(id));
 
       marker.style.left = `${x}px`;
       marker.style.top = `${y}px`;
@@ -159,7 +160,7 @@ export class SceneLabels {
       this.markerScreenPositions.set(id, new THREE.Vector2(x, y));
     }
 
-    if (state.gravity) this.layoutGravityLabels(width, height);
+    if (state.gravity || state.heliosphere) this.layoutGravityLabels(width, height);
 
     this.solarSystemLabel.hidden = !isFullJourney;
     if (isFullJourney) {

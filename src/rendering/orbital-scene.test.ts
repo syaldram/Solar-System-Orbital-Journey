@@ -1,0 +1,342 @@
+import * as THREE from 'three';
+import { afterEach, expect, it, vi } from 'vitest';
+import { OrbitalScene, resolveSceneSelection, type SceneState } from './orbital-scene';
+import { PLANET_IDS } from '../astronomy/planet-data';
+import { calculateSystemSnapshot } from '../astronomy/reference-frames';
+import { calculateOrbitPath } from '../astronomy/solar-system';
+import { createInitialExperienceState, getAlongPathMotion, updateExperience } from '../experience/experience-state';
+import type { HeliospherePresentation } from './heliosphere-presentation';
+import { mapHeliospherePosition } from './heliosphere-mapping';
+
+const capture = vi.hoisted(() => ({ scene: null as THREE.Scene | null, camera: null as THREE.PerspectiveCamera | null, width: 1280, pixelRatio: 0 }));
+vi.mock('three', async (original) => {
+  const actual = await original<typeof THREE>();
+  return { ...actual, WebGLRenderer: class {
+    domElement = { get clientWidth() { return capture.width; }, clientHeight: 720, addEventListener() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 1280, height: 720 }) };
+    capabilities = { getMaxAnisotropy: () => 1 };
+    setClearColor() {} setPixelRatio(value: number) { capture.pixelRatio = value; } setSize() {} dispose() {}
+    render(scene: THREE.Scene, camera: THREE.PerspectiveCamera) { scene.updateMatrixWorld(); capture.scene = scene; capture.camera = camera; }
+  }, TextureLoader: class { load() {} } };
+});
+vi.mock('three/addons/controls/OrbitControls.js', () => ({ OrbitControls: class {
+  target = new THREE.Vector3();
+  addEventListener() {} update() {} dispose() {}
+} }));
+vi.mock('./scene-labels', () => ({ SceneLabels: class { render() {} clearHover() {} hitTest() { return null; } updateHover() {} } }));
+vi.mock('./path-guide-presentation', () => ({ PathGuidePresentation: class {
+  root = new THREE.Group(); render() {} projectLabels() {}
+} }));
+vi.mock('./procedural-materials', () => ({
+  seededRandom: () => () => 0.5,
+  createGalaxyTexture: () => new THREE.Texture(),
+  createCoronaTexture: () => new THREE.Texture(), createGlowTexture: () => new THREE.Texture(),
+  createRingTexture: () => new THREE.Texture(), createEarthCloudTexture: () => new THREE.Texture(), createUranusTexture: () => new THREE.Texture(),
+  createAtmosphereMaterial: () => new THREE.MeshBasicMaterial(),
+  createSunMaterial: () => new THREE.ShaderMaterial({ uniforms: { time: { value: 0 } } }),
+}));
+afterEach(() => { capture.width = 1280; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it('integrates mapped mesh/path geometry and retained decorative animation through pause/reduced/resume', () => {
+  vi.stubGlobal('window', { devicePixelRatio: 1, addEventListener() {}, requestIdleCallback() {} });
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  const scene = new OrbitalScene({ canvas: { addEventListener() {} } as unknown as HTMLCanvasElement, labelLayer: {} as HTMLElement, assetBase: '/', onSelect() {}, onQualityAdapted() {} });
+  const instant = new Date('2042-03-14T12:30:00Z');
+  const initial = createInitialExperienceState(instant);
+  const paths = Object.fromEntries(PLANET_IDS.map((id) => [id, calculateOrbitPath(id, instant)])) as Parameters<OrbitalScene['setOrbitPaths']>[0];
+  scene.setOrbitPaths(paths);
+  const state: SceneState = {
+    snapshot: calculateSystemSnapshot(instant, instant, 'sun'), gravity: false, heliosphere: false,
+    frame: 'sun', bookmark: 'inner', cameraRevision: 0, selectedBody: null, followedPlanet: null,
+    viewOptions: initial.viewOptions, quality: 'high', reducedMotion: false,
+    rotations: Object.fromEntries(PLANET_IDS.map((id) => [id, 1.7])) as SceneState['rotations'],
+    rotationStabilized: false, trailRevision: 0, journeyProgress: 0,
+    pathMotion: getAlongPathMotion(initial), galacticProgress: 0,
+  };
+  scene.render(state, 0);
+  const sun = capture.scene?.getObjectByName('sun');
+  if (!(sun instanceof THREE.Mesh) || !(sun.material instanceof THREE.ShaderMaterial) || !sun.parent) throw new Error('Missing actual solar presentation');
+  const planets = PLANET_IDS.map((id) => {
+    const mesh = capture.scene?.getObjectByName(id);
+    if (!(mesh instanceof THREE.Mesh)) throw new Error('Missing actual planet');
+    return mesh;
+  });
+  const decoration = () => ({
+    time: sun.material instanceof THREE.ShaderMaterial ? sun.material.uniforms.time?.value : null,
+    transforms: sun.parent?.children.filter((object) => object instanceof THREE.Sprite).map((object) => ({ scale: object.scale.toArray(), rotation: object.material.rotation, opacity: object.material.opacity })),
+    spin: planets.map((mesh) => mesh.rotation.y),
+  });
+  const heliosphere = { ...state, heliosphere: true, rotationStabilized: true };
+  scene.render(heliosphere, 100);
+  const background = capture.scene?.getObjectByName('heliosphere-background');
+  const stars = background?.getObjectByName('heliosphere-distant-stars');
+  const band = background?.getObjectByName('heliosphere-milky-way-band');
+  if (!background || !(stars instanceof THREE.Points) || !(band instanceof THREE.Mesh)) throw new Error('Missing actual background artwork');
+  expect(background.parent).toBe(capture.scene);
+  expect(background.visible).toBe(true);
+  const sky = () => ({ transform: background.matrixWorld.toArray(), children: [band.matrix.toArray(), stars.matrix.toArray()], stars: Array.from(stars.geometry.getAttribute('position').array), starMaterial: stars.material.toJSON(), band: band.material.toJSON() });
+  const staticSky = sky();
+  const travel = capture.scene?.getObjectByName('heliosphere-travel');
+  const guides = travel?.getObjectByName('heliosphere-travel-guides');
+  if (!travel || !(guides instanceof THREE.LineSegments)) throw new Error('Missing tracking guides');
+  expect(travel.visible).toBe(true);
+  const travelSample = () => Array.from(guides.geometry.getAttribute('position').array);
+  const initialTravel = travelSample();
+  expect(stars.geometry.drawRange.count).toBe(1500);
+  const frozen = decoration();
+  scene.render(heliosphere, 5000);
+  expect(decoration()).toEqual(frozen);
+  expect(travelSample()).toEqual(initialTravel);
+  const playing = { ...heliosphere, pathMotion: { ...heliosphere.pathMotion, isPlaying: true } };
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.01 }, 5010);
+  planets.forEach((mesh) => expect(mesh.rotation.y).toBeCloseTo(1.7 + 10 * 0.00008, 12));
+  expect(decoration()).not.toEqual(frozen);
+  const beforeReduced = decoration();
+  const traveling = travelSample();
+  expect(traveling).not.toEqual(initialTravel);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.01, reducedMotion: true }, 6000);
+  expect(decoration()).toEqual(beforeReduced);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.01, reducedMotion: true }, 9000);
+  expect(decoration()).toEqual(beforeReduced);
+  expect(travelSample()).toEqual(traveling);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.02 }, 9010);
+  expect(sky()).toEqual(staticSky);
+  const mappedBeforeQuality = planets.map((mesh) => mesh.getWorldPosition(new THREE.Vector3()).toArray());
+  const beforeQualityTravel = travelSample();
+  scene.render({ ...playing, quality: 'low', heliospherePhaseSeconds: 0.02 }, 9011);
+  expect(stars.geometry.drawRange.count).toBe(450);
+  expect(guides.geometry.drawRange.count).toBe(24 * 6);
+  expect(travelSample()).toEqual(beforeQualityTravel);
+  expect(travel.position.toArray()).toEqual([0, 0, 0]);
+  expect(planets.map((mesh) => mesh.getWorldPosition(new THREE.Vector3()).toArray())).toEqual(mappedBeforeQuality);
+  scene.render({ ...playing, heliospherePhaseSeconds: 0.02 }, 9012);
+  capture.width = 390;
+  scene.resize();
+  expect(stars.geometry.drawRange.count).toBe(675);
+  expect(guides.geometry.drawRange.count).toBe(24 * 6);
+  capture.width = 1280;
+  scene.resize();
+  expect(stars.geometry.drawRange.count).toBe(1500);
+  planets.forEach((mesh) => expect(mesh.rotation.y).toBeCloseTo(1.7 + 20 * 0.00008, 12));
+  const resumed = decoration();
+  scene.render({ ...heliosphere, heliospherePhaseSeconds: 0.02 }, 10000);
+  expect(decoration()).toEqual(resumed);
+  // Compare the actual generated and visible heliosphere geometry, not a second mapping-only path.
+  planets.forEach((mesh, index) => {
+    const body = heliosphere.snapshot.planets[index];
+    if (!body) throw new Error('Missing snapshot');
+    const mapped = mapHeliospherePosition(body.position);
+    expect(mesh.getWorldPosition(new THREE.Vector3()).toArray()).toEqual([mapped.x, mapped.y, mapped.z]);
+  });
+  const visiblePaths: THREE.Line[] = [];
+  capture.scene?.traverse((object) => { if (object instanceof THREE.Line && object.visible && object.parent === sun.parent?.parent) visiblePaths.push(object); });
+  expect(visiblePaths).toHaveLength(8);
+  for (const [index, id] of PLANET_IDS.entries()) {
+    const vertices = visiblePaths[index]?.geometry.getAttribute('position');
+    expect(vertices?.count).toBe(paths[id].length);
+    paths[id].forEach((point, i) => {
+      const mapped = mapHeliospherePosition(point);
+      expect(vertices?.getX(i)).toBeCloseTo(mapped.x, 4);
+      expect(vertices?.getY(i)).toBeCloseTo(mapped.y, 4);
+      expect(vertices?.getZ(i)).toBeCloseTo(mapped.z, 4);
+    });
+  }
+  scene.render({ ...heliosphere, viewOptions: { ...heliosphere.viewOptions, orbitPaths: false } }, 10001);
+  expect(visiblePaths.every((line) => !line.visible)).toBe(true);
+  scene.render({ ...heliosphere, heliospherePhaseSeconds: 3 }, 10500);
+  const retained = decoration();
+  scene.handlePresentationHandoff({ kind: 'back', presentation: 'heliosphere', sessionId: 1 }, initial, 11000);
+  const reentered = updateExperience(initial, { type: 'enter-heliosphere' });
+  scene.handlePresentationHandoff({ kind: 'enter', presentation: 'heliosphere', sessionId: 2 }, reentered, 11000);
+  scene.render({ ...heliosphere, heliospherePhaseSeconds: 0 }, 11000);
+  expect(decoration()).toEqual(retained);
+  // Normal physical rotation follows explicit dates even while paused/reduced;
+  // only the high-speed illustrative stabilization consumes retained seconds.
+  const scrubbedRotations = Object.fromEntries(PLANET_IDS.map((id) => [id, 2.6])) as SceneState['rotations'];
+  scene.render({ ...heliosphere, rotationStabilized: false, reducedMotion: true, rotations: scrubbedRotations }, 20000);
+  planets.forEach((mesh) => expect(mesh.rotation.y).toBe(2.6));
+  expect(sky().stars).toEqual(staticSky.stars);
+  expect(sky().band).toEqual(staticSky.band);
+  expect(sky().children).toEqual(staticSky.children);
+  expect(sky().starMaterial).toEqual(staticSky.starMaterial);
+  expect(background.position.toArray()).toEqual(capture.camera?.position.toArray());
+  scene.render(state, 21000);
+  expect(background.visible).toBe(false);
+  expect(travel.visible).toBe(false);
+  scene.render(heliosphere, 22000);
+  expect(capture.scene?.getObjectByName('heliosphere-background')).toBe(background);
+  expect(capture.scene?.getObjectByName('heliosphere-travel')).toBe(travel);
+  const disposals = [band.geometry, band.material, stars.geometry, stars.material, guides.geometry, guides.material].map((resource) => vi.spyOn(resource, 'dispose'));
+  scene.dispose();
+  disposals.forEach((dispose) => expect(dispose).toHaveBeenCalledTimes(1));
+  expect(background.children).toHaveLength(0);
+});
+
+it('picks every region from the actual renderer-delivered geometry and respects hidden ancestors', () => {
+  vi.stubGlobal('window', { devicePixelRatio: 1, addEventListener() {}, requestIdleCallback() {} });
+  const instant = new Date('2042-03-14T12:30:00Z');
+  const initial = createInitialExperienceState(instant);
+  const handlers = new Map<string, (event: PointerEvent) => void>();
+  const onSelect = vi.fn();
+  const canvas = { addEventListener(type: string, handler: (event: PointerEvent) => void) { handlers.set(type, handler); } };
+  const scene = new OrbitalScene({ canvas: canvas as unknown as HTMLCanvasElement, labelLayer: {} as HTMLElement, assetBase: '/', onSelect, onQualityAdapted() {} });
+  const renderState: SceneState = {
+    snapshot: calculateSystemSnapshot(instant, instant, 'sun'), gravity: false, heliosphere: true,
+    frame: 'sun', bookmark: 'inner', cameraRevision: 0, selectedBody: null, followedPlanet: null,
+    viewOptions: initial.viewOptions, quality: 'high', reducedMotion: false,
+    rotations: Object.fromEntries(PLANET_IDS.map((id) => [id, 0])) as SceneState['rotations'],
+    rotationStabilized: false, trailRevision: 0, journeyProgress: 0,
+    pathMotion: getAlongPathMotion(initial), galacticProgress: 0,
+  };
+  scene.render(renderState, 0);
+  const regions: HeliospherePresentation['drawables'] = [];
+  capture.scene?.traverse((object) => {
+    if (['solar-wind', 'termination-shock', 'heliosheath', 'heliopause', 'interstellar-space'].includes(object.name)) {
+      regions.push({ object, region: object.name as typeof regions[number]['region'], layer: object.name === 'termination-shock' ? 'terminationShock' : 'outerHeliosphere' });
+    }
+  });
+  const camera = capture.camera;
+  if (!camera) throw new Error('Missing renderer camera');
+  const raycaster = new THREE.Raycaster();
+  const flow = capture.scene?.getObjectByName('solar-wind-flow');
+  if (!(flow instanceof THREE.Points)) throw new Error('Missing actual flow');
+  const flowRecords: HeliospherePresentation['drawables'] = [{ object: flow, region: 'solar-wind', layer: 'outerHeliosphere' }];
+  regions.push(...flowRecords);
+  expect(regions).toHaveLength(6);
+  const particle = new THREE.Vector3().fromBufferAttribute(flow.geometry.getAttribute('position'), 0);
+  flow.localToWorld(particle);
+  raycaster.set(particle.clone().add(new THREE.Vector3(0, 5, 0)), new THREE.Vector3(0, -1, 0));
+  expect(resolveSceneSelection(raycaster, [], flowRecords)).toEqual({ kind: 'region', region: 'solar-wind' });
+  scene.render({ ...renderState, heliosphereLayers: { outerHeliosphere: false, terminationShock: true, orbitPaths: true, labels: true } }, 1);
+  expect(flow.visible).toBe(false);
+  expect(resolveSceneSelection(raycaster, [], flowRecords)).toBeNull();
+  for (const phase of [0, 5, 15]) {
+    for (const quality of ['high', 'low'] as const) {
+      const animatedState = { ...renderState, heliospherePhaseSeconds: phase, quality };
+      scene.render(animatedState, 100000);
+      const root = regions[0]?.object.parent;
+      if (!root) throw new Error('Missing rendered boundary transform');
+      for (const [region, x, y] of [['solar-wind', 550, 300], ['termination-shock', 414, 300], ['heliosheath', 380, 300], ['heliopause', 332, 300], ['interstellar-space', 315, 380]] as const) {
+        // Curved visible limbs, including inner regions behind faint foreground shells.
+        raycaster.setFromCamera(new THREE.Vector2(x / 1280 * 2 - 1, 1 - y / 720 * 2), camera);
+        expect(resolveSceneSelection(raycaster, [], regions)).toEqual({ kind: 'region', region });
+        const layer = region === 'termination-shock' ? 'terminationShock' : 'outerHeliosphere';
+        scene.render({ ...animatedState, heliosphereLayers: { outerHeliosphere: true, terminationShock: true, orbitPaths: true, labels: true, [layer]: false } }, 100001);
+        for (const record of regions) expect(record.object.visible).toBe(record.layer !== layer);
+        expect(resolveSceneSelection(raycaster, [], regions)).not.toEqual({ kind: 'region', region });
+        scene.render(animatedState, 100002);
+      }
+    }
+  }
+  // The closed upper and lower halves both expose interior artwork. A nearest
+  // intersection-only resolver would incorrectly select interstellar space.
+  scene.render(renderState, 100003);
+  for (const height of [-400, 400]) {
+    for (const [region, radius] of [['solar-wind', 70], ['termination-shock', 108], ['heliosheath', 120], ['heliopause', 138], ['interstellar-space', 158]] as const) {
+      raycaster.set(new THREE.Vector3(radius, height, 0), new THREE.Vector3(0, -Math.sign(height), 0));
+      expect(resolveSceneSelection(raycaster, [], regions)).toEqual({ kind: 'region', region });
+    }
+  }
+  raycaster.setFromCamera(new THREE.Vector2(315 / 1280 * 2 - 1, 1 - 380 / 720 * 2), camera);
+  // Exercise the actual registered canvas event handlers against visible
+  // renderer-delivered geometry, without exposing a gesture test API.
+  const pointer = { pointerId: 1, clientX: 315, clientY: 380, button: 0, isPrimary: true };
+  const emit = (type: string, event: Partial<PointerEvent> = {}) => handlers.get(type)?.({ ...pointer, ...event } as PointerEvent);
+  emit('pointerdown'); emit('pointerup');
+  expect(onSelect).toHaveBeenLastCalledWith({ kind: 'region', region: 'interstellar-space' });
+  expect(onSelect).toHaveBeenCalledTimes(1);
+  onSelect.mockClear();
+  emit('pointerdown'); emit('pointermove', { clientX: pointer.clientX + 10 }); emit('pointerup');
+  emit('pointerdown', { button: 2 }); emit('pointerup', { button: 2 });
+  emit('pointerdown'); emit('pointerdown', { pointerId: 2, isPrimary: false });
+  emit('pointerup', { pointerId: 2 }); emit('pointerup');
+  emit('pointerdown'); emit('pointercancel'); emit('pointerup');
+  expect(onSelect).not.toHaveBeenCalled();
+  const root = regions[0]?.object.parent;
+  if (!root) throw new Error('Missing region group');
+  root.visible = false;
+  expect(resolveSceneSelection(raycaster, [], regions)).toBeNull();
+  root.visible = true;
+  expect(resolveSceneSelection(raycaster, [], regions)).toEqual({ kind: 'region', region: 'interstellar-space' });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(3), new THREE.MeshBasicMaterial());
+  body.userData.planetId = 'earth';
+  body.position.copy(raycaster.ray.at(10, new THREE.Vector3()));
+  body.updateMatrixWorld();
+  expect(resolveSceneSelection(raycaster, [body], regions)).toEqual({ kind: 'body', body: 'earth' });
+  expect(resolveSceneSelection(raycaster, [body], regions, 'saturn')).toEqual({ kind: 'body', body: 'saturn' });
+  body.visible = false;
+  expect(resolveSceneSelection(raycaster, [body], regions)).toEqual({ kind: 'region', region: 'interstellar-space' });
+});
+
+it('routes actual slow auto samples through callback state into reduced renderer load without moving mapped bodies or boundaries', () => {
+  vi.stubGlobal('window', { devicePixelRatio: 2, addEventListener() {}, requestIdleCallback() {} });
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  const instant = new Date('2026-10-30T00:00:00Z');
+  const initial = createInitialExperienceState(instant);
+  let state: SceneState = {
+    snapshot: calculateSystemSnapshot(instant, instant, 'sun'), gravity: false, heliosphere: true,
+    frame: 'sun', bookmark: 'inner', cameraRevision: 0, selectedBody: null, followedPlanet: null,
+    viewOptions: initial.viewOptions, quality: 'auto', reducedMotion: false,
+    rotations: Object.fromEntries(PLANET_IDS.map((id) => [id, 0])) as SceneState['rotations'],
+    rotationStabilized: false, trailRevision: 0, journeyProgress: 0,
+    pathMotion: getAlongPathMotion(initial), galacticProgress: 0, heliospherePhaseSeconds: 5,
+  };
+  const adapted = vi.fn((quality: SceneState['quality']) => { state = { ...state, quality }; });
+  const scene = new OrbitalScene({ canvas: { addEventListener() {} } as unknown as HTMLCanvasElement, labelLayer: {} as HTMLElement, assetBase: '/', onSelect() {}, onQualityAdapted: adapted });
+  scene.render(state, 0);
+  const stars = capture.scene?.getObjectByName('heliosphere-distant-stars');
+  if (!(stars instanceof THREE.Points)) throw new Error('Missing actual stars');
+  const positions = () => PLANET_IDS.map((id) => capture.scene?.getObjectByName(id)?.getWorldPosition(new THREE.Vector3()).toArray());
+  const before = positions();
+  expect(capture.pixelRatio).toBe(2);
+  expect(stars.geometry.drawRange.count).toBe(1500);
+  for (let i = 1; i <= 181; i++) scene.render(state, i * 30);
+  expect(adapted).toHaveBeenCalledExactlyOnceWith('balanced');
+  expect(capture.pixelRatio).toBe(1.5);
+  expect(stars.geometry.drawRange.count).toBe(900);
+  expect(positions()).toEqual(before);
+  const boundary = capture.scene?.getObjectByName('termination-shock')?.parent;
+  expect(boundary?.scale.x).toBeCloseTo(1.02);
+  for (const phase of [0, 5, 10, 15, 20]) {
+    scene.render({ ...state, heliospherePhaseSeconds: phase }, 6000 + phase * 1000);
+    expect(boundary?.scale.x).toBeCloseTo(1 + .02 * Math.sin(phase * Math.PI / 10));
+    expect(positions()).toEqual(before);
+  }
+});
+
+it('delegates disposal to the actual initialized Galaxy owner before generic scene cleanup', () => {
+  vi.stubGlobal('window', { devicePixelRatio: 1, addEventListener() {}, requestIdleCallback() {} });
+  const instant = new Date('2026-10-30T00:00:00Z');
+  const initial = createInitialExperienceState(instant);
+  const scene = new OrbitalScene({ canvas: { addEventListener() {} } as unknown as HTMLCanvasElement, labelLayer: {} as HTMLElement, assetBase: '/', onSelect() {}, onQualityAdapted() {} });
+  scene.render({
+    snapshot: calculateSystemSnapshot(instant, instant, 'sun'), gravity: false, heliosphere: false,
+    frame: 'galaxy', bookmark: 'full', cameraRevision: 0, selectedBody: null, followedPlanet: null,
+    viewOptions: initial.viewOptions, quality: 'high', reducedMotion: false,
+    rotations: Object.fromEntries(PLANET_IDS.map((id) => [id, 0])) as SceneState['rotations'],
+    rotationStabilized: false, trailRevision: 0, journeyProgress: 0,
+    pathMotion: getAlongPathMotion(initial), galacticProgress: .25,
+  }, 0);
+  const root = capture.scene?.children.find((child) => child.children.some((object) => object instanceof THREE.Mesh && object.geometry instanceof THREE.PlaneGeometry && object.geometry.parameters.width === 215));
+  if (!root) throw new Error('Missing actual initialized Galaxy');
+  const resources = new Set<{ dispose(): void }>();
+  let sprites = 0;
+  const textures = new Set<THREE.Texture>();
+  root.traverse((object) => {
+    if (object instanceof THREE.Sprite) sprites++;
+    if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Points || object instanceof THREE.Sprite) {
+      resources.add(object.geometry);
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        resources.add(material);
+        if ('map' in material && material.map instanceof THREE.Texture) textures.add(material.map);
+      }
+    }
+  });
+  expect(sprites).toBe(1);
+  expect(textures.size).toBe(2); // shared disk/haze map plus Sprite glow
+  for (const texture of textures) resources.add(texture);
+  const disposals = [...resources].map((resource) => vi.spyOn(resource, 'dispose'));
+  scene.dispose();
+  disposals.forEach((dispose) => expect(dispose).toHaveBeenCalledTimes(1));
+  expect(root.parent).toBeNull();
+  expect(root.children).toHaveLength(0);
+});

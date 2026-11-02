@@ -1,0 +1,66 @@
+{
+  "method": "gzip level 9, each runtime response independently, mtime=0; excludes source maps",
+  "resources": [
+    {
+      "path": "assets/index-D4cNgOe8.css",
+      "rawBytes": 23244,
+      "gzip9Bytes": 5501
+    },
+    {
+      "path": "assets/index-Dmpg1tVu.js",
+      "rawBytes": 678166,
+      "gzip9Bytes": 172078
+    },
+    {
+      "path": "assets/textures/earth.jpg",
+      "rawBytes": 231440,
+      "gzip9Bytes": 231202
+    },
+    {
+      "path": "assets/textures/jupiter.jpg",
+      "rawBytes": 225878,
+      "gzip9Bytes": 211772
+    },
+    {
+      "path": "assets/textures/mars.jpg",
+      "rawBytes": 140317,
+      "gzip9Bytes": 139990
+    },
+    {
+      "path": "assets/textures/mercury.jpg",
+      "rawBytes": 114642,
+      "gzip9Bytes": 114291
+    },
+    {
+      "path": "assets/textures/neptune.jpg",
+      "rawBytes": 210528,
+      "gzip9Bytes": 197565
+    },
+    {
+      "path": "assets/textures/saturn.jpg",
+      "rawBytes": 275735,
+      "gzip9Bytes": 263407
+    },
+    {
+      "path": "assets/textures/venus.jpg",
+      "rawBytes": 176407,
+      "gzip9Bytes": 176178
+    },
+    {
+      "path": "index.html",
+      "rawBytes": 19363,
+      "gzip9Bytes": 5415
+    }
+  ],
+  "criticalPaths": [
+    "assets/index-D4cNgOe8.css",
+    "assets/index-Dmpg1tVu.js",
+    "assets/textures/earth.jpg",
+    "assets/textures/mars.jpg",
+    "assets/textures/mercury.jpg",
+    "assets/textures/venus.jpg",
+    "index.html"
+  ],
+  "criticalGzip9Bytes": 844655,
+  "totalGzip9Bytes": 1517399
+}
