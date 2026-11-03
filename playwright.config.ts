@@ -11,7 +11,9 @@ export default defineConfig({
   reporter: 'html',
   use: {
     baseURL: 'http://127.0.0.1:4173/Solar-System-Orbital-Journey/',
-    trace: 'on-first-retry',
+    // CI has a 90s budget for software rendering and diagnostic recording.
+    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    screenshot: 'only-on-failure',
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },

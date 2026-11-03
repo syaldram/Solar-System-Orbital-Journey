@@ -293,11 +293,29 @@ test('Heliosphere static sky freezes during reduced-motion planetary playback', 
   expect(errors).toEqual([]);
 });
 
+for (const width of [320, 390]) {
+  test(`phone toolbar keeps scientific view controls reachable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('./?view=sun');
+    for (const view of ['Travel with Sun', 'Watch from Space']) {
+      await page.getByRole('button', { name: view, exact: true }).click();
+      for (const name of ['Return to opening screen', 'Explore Heliosphere', 'Sun’s Gravity', 'View options']) {
+        await expect(page.getByRole('button', { name, exact: true })).toBeInViewport({ ratio: 1 });
+        await page.getByRole('button', { name, exact: true }).click({ trial: true });
+      }
+      await page.getByRole('button', { name: 'View options' }).click();
+      await expect(page.getByLabel('Visual quality')).toBeVisible();
+      await page.getByRole('button', { name: 'Close options' }).click();
+    }
+  });
+}
+
 test('Heliosphere static sky phone low quality keeps Labels-off card and keyboard focus readable', async ({ page, browserName }, testInfo) => {
   const errors = collectRenderErrors(page);
   await observeHeliosphereRender(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('./?view=sun');
+  await expect(page.getByRole('button', { name: 'View options' })).toBeInViewport({ ratio: 1 });
   await page.getByRole('button', { name: 'View options' }).click();
   await page.getByLabel('Visual quality').selectOption('low');
   await page.getByRole('button', { name: 'Close options' }).click();
@@ -369,11 +387,15 @@ test('Heliosphere actual flow, shimmer, Sun and spin share retained motion throu
   const aligned = await page.evaluate(() => {
     const expected = (window as unknown as { __heliosphereEarthTarget: { x: number; y: number } }).__heliosphereEarthTarget;
     const marker = document.querySelector<HTMLElement>('[data-body="earth"]');
-    return { expected, x: Number.parseFloat(marker?.style.left ?? 'NaN'), y: Number.parseFloat(marker?.style.top ?? 'NaN') };
+    // CSSOM precision varies by browser and coordinate magnitude.
+    const serialized = document.createElement('div').style;
+    serialized.left = `${expected.x}px`;
+    serialized.top = `${expected.y}px`;
+    return { expected: { x: Number.parseFloat(serialized.left), y: Number.parseFloat(serialized.top) },
+      x: Number.parseFloat(marker?.style.left ?? 'NaN'), y: Number.parseFloat(marker?.style.top ?? 'NaN') };
   });
-  // SceneLabels serializes CSS coordinates to three decimal places.
-  expect(Math.abs(aligned.x - aligned.expected.x)).toBeLessThanOrEqual(.001);
-  expect(Math.abs(aligned.y - aligned.expected.y)).toBeLessThanOrEqual(.001);
+  expect(aligned.x).toBe(aligned.expected.x);
+  expect(aligned.y).toBe(aligned.expected.y);
   await page.locator('#follow-planet').click();
   await page.locator('#play-toggle').click();
   await page.locator('[data-heliosphere-layer="outerHeliosphere"]').check();
@@ -535,13 +557,17 @@ test.describe('Heliosphere tracking travel evidence', () => {
       await page.clock.install({ time: epoch });
       await page.clock.pauseAt(new Date(epoch.getTime() + 3600000));
       await page.goto(`./?view=${view}&body=earth`);
-      await page.clock.runFor(1200);
+      // Exercise retained phase at each checkpoint without rasterizing every
+      // intermediate 16ms frame on CI's software renderer.
+      await page.clock.fastForward(1200);
+      await page.clock.runFor(64);
       // A stopped clock cannot satisfy pointer actionability's RAF stability
       // wait. Invoke the real controls' native handlers, then deliver frames.
       const click = (selector: string) => page.locator(selector).evaluate((element) => (element as HTMLElement).click());
       const scientificCamera = (await heliosphereSky(page)).camera;
       await click('#enter-heliosphere');
-      await page.clock.runFor(1200);
+      await page.clock.fastForward(1200);
+      await page.clock.runFor(64);
       await expect(page.locator('#play-toggle')).toHaveAttribute('aria-pressed', 'false');
       await click('#close-planet');
       if (layout === 'phone') await click('#heliosphere-sheet > summary');
@@ -562,7 +588,8 @@ test.describe('Heliosphere tracking travel evidence', () => {
       const first = await captureFrame('before');
       const camera = await heliosphereSky(page);
       await click('#play-toggle');
-      await page.clock.runFor(3040);
+      await page.clock.fastForward(2976);
+      await page.clock.runFor(64);
       const moving = await captureFrame('moving');
       expect(moving.phase).toBeGreaterThan(first.phase + 3);
       expect(moving.travel).not.toEqual(first.travel);
@@ -575,7 +602,7 @@ test.describe('Heliosphere tracking travel evidence', () => {
       await click('#play-toggle');
       await page.clock.runFor(64);
       const paused = await captureFrame('paused');
-      await page.clock.runFor(1000);
+      await page.clock.fastForward(1000);
       expect(await heliosphereRender(page)).toEqual(paused);
       await click('[data-camera-navigation="orbit-left"]');
       await page.clock.runFor(64);
@@ -584,7 +611,8 @@ test.describe('Heliosphere tracking travel evidence', () => {
       expect(Math.hypot(...inspected.direction.map((value, index) => value - (camera.direction[index] ?? 0)))).toBeGreaterThan(.01);
       await captureHeliosphere(page, info, `travel-${layout}-inspection`);
       await click('#play-toggle');
-      await page.clock.runFor(2000);
+      await page.clock.fastForward(1936);
+      await page.clock.runFor(64);
       const resumed = await captureFrame('resumed');
       expect(resumed.phase).toBeGreaterThan(paused.phase + 1.9);
       expect(resumed.travel).not.toEqual(paused.travel);
@@ -2210,9 +2238,17 @@ test('automatic poor-frame adaptation reaches actual renderer and retains phase 
     // scene callback, main dispatch and quality renderer remain in the path.
     await route.fulfill({ response, body: `${await response.text()}
 const sampleOriginal = AdaptiveQualityMonitor.prototype.sample;
-let sampledAt = performance.now();
-AdaptiveQualityMonitor.prototype.sample = function(preference, now) {
-  return sampleOriginal.call(this, preference, window.__slowFrames ? (sampledAt += 30) : now);
+AdaptiveQualityMonitor.prototype.sample = function(preference) {
+  if (!window.__slowFrames) return null;
+  window.__slowFrames = false;
+  // Prime the time anchor with an ignored nonpositive delta, then feed the
+  // real policy a complete window without requiring 180 expensive GPU frames.
+  sampleOriginal.call(this, preference, 0);
+  let adapted = null;
+  for (let sample = 1; sample <= 180; sample++) {
+    adapted = sampleOriginal.call(this, preference, sample * 30);
+  }
+  return adapted;
 };` });
   });
   await page.goto('./?view=sun&body=earth');
@@ -2223,6 +2259,8 @@ AdaptiveQualityMonitor.prototype.sample = function(preference, now) {
   await renderedFrames(page);
   const before = await heliosphereRender(page);
   expect(before.phase).toBeGreaterThan(.2);
+  await expect(page.locator('#quality-select')).toHaveValue('auto');
+  expect((await heliosphereSky(page)).starCount).toBe(1500);
   await page.evaluate(() => { (window as unknown as { __slowFrames: boolean }).__slowFrames = true; });
   await expect(page.locator('#quality-select')).toHaveValue('balanced', { timeout: 20000 });
   await expect.poll(async () => (await heliosphereSky(page)).starCount).toBe(900);
