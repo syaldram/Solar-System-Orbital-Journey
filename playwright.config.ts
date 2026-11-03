@@ -11,8 +11,8 @@ export default defineConfig({
   reporter: 'html',
   use: {
     baseURL: 'http://127.0.0.1:4173/Solar-System-Orbital-Journey/',
-    // CI has a 90s budget for software rendering and diagnostic recording.
-    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    // Tracing every test under CI software rendering doubles the run; failures keep screenshots instead.
+    trace: 'off',
     screenshot: 'only-on-failure',
   },
   projects: [
@@ -27,7 +27,10 @@ export default defineConfig({
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 4173',
+    // CI builds first, so serve the production bundle instead of the slower unbundled dev server.
+    command: process.env.CI
+      ? 'npm run preview -- --host 127.0.0.1 --port 4173 --strictPort'
+      : 'npm run dev -- --host 127.0.0.1 --port 4173',
     url: 'http://127.0.0.1:4173/Solar-System-Orbital-Journey/',
     reuseExistingServer: !process.env.CI,
   },
