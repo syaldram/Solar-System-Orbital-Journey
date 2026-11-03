@@ -27,10 +27,7 @@ export default defineConfig({
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
   webServer: {
-    // CI builds first, so serve the production bundle instead of the slower unbundled dev server.
-    command: process.env.CI
-      ? 'npm run preview -- --host 127.0.0.1 --port 4173 --strictPort'
-      : 'npm run dev -- --host 127.0.0.1 --port 4173',
+    command: 'npm run dev -- --host 127.0.0.1 --port 4173',
     url: 'http://127.0.0.1:4173/Solar-System-Orbital-Journey/',
     reuseExistingServer: !process.env.CI,
   },
