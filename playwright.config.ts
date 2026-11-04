@@ -5,13 +5,18 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
-  // CI renders WebGL in software; camera damping settles per frame, so waits run longer.
-  timeout: process.env.CI ? 90_000 : 30_000,
+  // CI renders WebGL in software, about 5x slower per Heliosphere frame than a dev machine.
+  // Actionability checks and settledBoundingBox wait on frames, so heavy scenes already pass at 50-86s.
+  timeout: process.env.CI ? 180_000 : 30_000,
+  // Stop a few minutes before the 60-minute browser-smoke job limit so the HTML report is still written.
+  globalTimeout: process.env.CI ? 55 * 60_000 : undefined,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
     baseURL: 'http://127.0.0.1:4173/Solar-System-Orbital-Journey/',
-    trace: 'on-first-retry',
+    // Tracing every test under CI software rendering doubles the run; failures keep screenshots instead.
+    trace: 'off',
+    screenshot: 'only-on-failure',
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
@@ -22,7 +27,8 @@ export default defineConfig({
         headless: process.env.PLAYWRIGHT_FIREFOX_HEADED !== '1',
       },
     },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    // Desktop Safari defaults to 2x; matching the other engines' 1x cuts CI software-WebGL run time.
+    { name: 'webkit', use: { ...devices['Desktop Safari'], deviceScaleFactor: 1 } },
   ],
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4173',

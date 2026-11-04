@@ -37,9 +37,8 @@ test('forced WebGL construction failure retains lesson, browser requirements and
   expect(errors).toEqual([]);
 });
 
-for (const sample of baseline.samples) for (const frame of ['sun', 'space']) {
-  test(`frozen actual rounded physical cards: ${sample.label} from ${frame}`, async ({ page }) => {
-    test.setTimeout(90000);
+for (const sample of baseline.samples) for (const frame of ['sun', 'space']) for (const [qualityIndex, quality] of ['high', 'balanced', 'low'].entries()) {
+  test(`frozen actual rounded physical cards: ${sample.label} from ${frame} at ${quality}`, async ({ page }) => {
     await page.clock.setFixedTime(new Date(baseline.anchorUtc));
     await page.goto(`./?view=${frame}&date=${encodeURIComponent(sample.instantUtc)}&body=earth`);
     await page.locator('#enter-heliosphere').click();
@@ -52,29 +51,50 @@ for (const sample of baseline.samples) for (const frame of ['sun', 'space']) {
     await expect(page.locator('#timeline-range')).toHaveAttribute('data-start', String(anchorMs));
     await expect(page.locator('#timeline-range')).toHaveAttribute('data-end', String(endMs));
     await expect(page.locator('#timeline-range')).toHaveValue(String(Math.round((instantMs - anchorMs) / (endMs - anchorMs) * 10000)));
-    let index = 0;
-    for (const quality of ['high', 'balanced', 'low']) {
-      await page.getByRole('button', { name: 'View options' }).click();
-      await page.getByLabel('Visual quality').selectOption(quality);
-      await page.getByRole('button', { name: 'Close options' }).click();
-      for (const speed of ['day', 'month', 'year', 'decade']) {
-        await page.getByLabel('Speed', { exact: true }).selectOption(speed);
-        const id = PLANET_IDS[index++ % PLANET_IDS.length];
-        if (!id) throw new Error('Missing fixture planet');
-        const profile = getPlanetProfile(id);
-        // Semantic marker activation reaches real selection and main card wiring.
-        await page.getByRole('button', { name: `Select ${profile.name}`, exact: true }).evaluate((element) => (element as HTMLElement).click());
-        const expected = sample.planets[id];
-        const r = Math.hypot(expected.positionAu.x, expected.positionAu.y, expected.positionAu.z);
-        const format = (value: number, digits: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: digits }).format(value);
-        await expect(page.locator('#planet-distance')).toHaveText(`${format(r, r < 2 ? 3 : 2)} AU`);
-        await expect(page.locator('#planet-speed')).toHaveText(`${format(expected.speedKmPerSecond, 1)} km/s`);
-        await expect(page.locator('#planet-period')).toHaveText(profile.siderealOrbitYears < 1 ? `${format(profile.siderealOrbitYears * 365.25, 1)} days` : `${format(profile.siderealOrbitYears, 2)} years`);
-        await expect(page.locator('#play-toggle')).toHaveAttribute('aria-pressed', 'false');
-      }
+    // Preserve the original planet distribution across all quality/speed pairs.
+    let index = qualityIndex * 4;
+    await page.getByRole('button', { name: 'View options' }).click();
+    await page.getByLabel('Visual quality').selectOption(quality);
+    await page.getByRole('button', { name: 'Close options' }).click();
+    for (const speed of ['day', 'month', 'year', 'decade']) {
+      await page.getByLabel('Speed', { exact: true }).selectOption(speed);
+      const id = PLANET_IDS[index++ % PLANET_IDS.length];
+      if (!id) throw new Error('Missing fixture planet');
+      const profile = getPlanetProfile(id);
+      // Semantic marker activation reaches real selection and main card wiring.
+      await page.getByRole('button', { name: `Select ${profile.name}`, exact: true }).evaluate((element) => (element as HTMLElement).click());
+      const expected = sample.planets[id];
+      const r = Math.hypot(expected.positionAu.x, expected.positionAu.y, expected.positionAu.z);
+      const format = (value: number, digits: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: digits }).format(value);
+      await expect(page.locator('#planet-distance')).toHaveText(`${format(r, r < 2 ? 3 : 2)} AU`);
+      await expect(page.locator('#planet-speed')).toHaveText(`${format(expected.speedKmPerSecond, 1)} km/s`);
+      await expect(page.locator('#planet-period')).toHaveText(profile.siderealOrbitYears < 1 ? `${format(profile.siderealOrbitYears * 365.25, 1)} days` : `${format(profile.siderealOrbitYears, 2)} years`);
+      await expect(page.locator('#play-toggle')).toHaveAttribute('aria-pressed', 'false');
     }
   });
 }
+
+test('quality transitions preserve the selected physical card and date in one session', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(baseline.anchorUtc));
+  await page.goto(`./?view=sun&date=${encodeURIComponent(baseline.anchorUtc)}&body=earth`);
+  await page.locator('#enter-heliosphere').click();
+  const metrics = page.locator('#planet-card .planet-card__metrics dd');
+  const physicalValues = await metrics.allTextContents();
+  expect(physicalValues).toHaveLength(3);
+  expect(physicalValues.every((value) => value.trim().length > 0)).toBe(true);
+  const date = await page.locator('#current-date').innerText();
+  await expect(page.locator('#planet-name')).toHaveText('Earth');
+  for (const quality of ['high', 'balanced', 'low']) {
+    await page.getByRole('button', { name: 'View options' }).click();
+    await page.getByLabel('Visual quality').selectOption(quality);
+    await page.getByRole('button', { name: 'Close options' }).click();
+    await expect(page.getByLabel('Visual quality')).toHaveValue(quality);
+    await expect(page.locator('#planet-name')).toHaveText('Earth');
+    await expect(metrics).toHaveText(physicalValues);
+    await expect(page.locator('#current-date')).toHaveText(date);
+    await expect(page.locator('#play-toggle')).toHaveAttribute('aria-pressed', 'false');
+  }
+});
 
 test('nonzero Galactic progress survives Heliosphere entry, playback and Back', async ({ page }) => {
   await page.goto('./?view=galaxy');
