@@ -8,3 +8,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-browser-ci-webkit-dpr.md`
   summary: Intermittent software-WebGL frame stalls can still time out Playwright cases in Chromium (already 1x), which the WebKit-only deviceScaleFactor change does not address.
   evidence: Run 41697888625 timed out Chromium `tests/app.spec.ts:1904` and `:1969` at deviceScaleFactor 1; run 41707722384 passed Chromium, so the stall is intermittent. Several consecutive green browser-smoke runs, or a CI `--repeat-each` of those cases, would show whether it persists.
+- source_spec: `_bmad-output/implementation-artifacts/spec-webkit-control-click-during-playback.md`
+  summary: `AppInterface.render` still rewrites `#scene-status` (aria-live polite) and `#explain-copy` via `innerHTML` on every 100ms playback render, even when the markup is unchanged.
+  evidence: `src/interface/app-interface.ts` scene-status and explain-copy `innerHTML` assignments run on each render. This is pre-existing and not caused by the control-text fix. A screen reader (VoiceOver/Safari) may re-announce the status during playback, and text selection in an open Explain panel is lost. Unverified: a VoiceOver check during playback would confirm the re-announcement.

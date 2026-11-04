@@ -2274,3 +2274,29 @@ AdaptiveQualityMonitor.prototype.sample = function(preference) {
     await expect(page.locator('#planet-name')).toHaveText(await button.textContent() ?? '');
   }
 });
+
+// Playback re-renders the interface every 100ms. WebKit drops a click when the
+// node under the pointer is replaced between press and release, so a held press
+// must still reach the play toggle, and periodic renders must keep control text nodes.
+test('Pause pressed across playback interface renders still pauses', async ({ page }) => {
+  await page.goto('./?view=sun');
+  await page.locator('#play-toggle').click();
+  await expect(page.locator('#play-toggle')).toHaveAttribute('aria-pressed', 'true');
+  const controls = ['#play-toggle > span', '#today-button', '#follow-planet', '#replay-button', '#tour-next'];
+  await page.evaluate((selectors) => {
+    (window as unknown as { __controlText: (Node | null)[] }).__controlText = selectors.map((selector) => document.querySelector(selector)?.firstChild ?? null);
+  }, controls);
+  const box = await page.locator('#play-toggle').boundingBox();
+  if (!box) throw new Error('Play toggle has no layout box');
+  const date = await page.locator('#current-date').textContent();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  // A changed date proves an interface render ran while the button was held.
+  await expect(page.locator('#current-date')).not.toHaveText(date ?? '');
+  expect(await page.evaluate((selectors) => selectors.map((selector, index) => {
+    const node = document.querySelector(selector)?.firstChild ?? null;
+    return node !== null && node === (window as unknown as { __controlText: (Node | null)[] }).__controlText[index];
+  }), controls)).toEqual(controls.map(() => true));
+  await page.mouse.up();
+  await expect(page.locator('#play-toggle')).toHaveAttribute('aria-pressed', 'false');
+});

@@ -94,6 +94,12 @@ const EXPLANATIONS: Readonly<Record<ViewMode, { title: string; html: string; sta
   },
 };
 
+// Playback re-renders the interface every 100ms. WebKit drops a click when the node
+// under the pointer is replaced between press and release, so keep unchanged control text.
+function setControlText(control: Element | null, text: string): void {
+  if (control && control.textContent !== text) control.textContent = text;
+}
+
 export class AppInterface {
   private readonly app = element<HTMLElement>('app');
   private readonly chrome = element<HTMLElement>('app-chrome');
@@ -317,7 +323,7 @@ export class AppInterface {
       element<HTMLElement>('timeline-start').textContent = 'Present';
       element<HTMLElement>('timeline-end').textContent = `Approximately ${state.galacticEndMillionYears} million years`;
       this.speedSelect.value = String(state.galacticSpeed);
-      element<HTMLButtonElement>('today-button').textContent = 'Return to Present';
+      setControlText(element<HTMLButtonElement>('today-button'), 'Return to Present');
     } else {
       this.timeline.min = '0';
       this.timeline.max = '10000';
@@ -333,7 +339,7 @@ export class AppInterface {
       element<HTMLElement>('timeline-start').textContent = 'Today';
       element<HTMLElement>('timeline-end').textContent = '+165 years';
       this.speedSelect.value = state.speed;
-      element<HTMLButtonElement>('today-button').textContent = 'Return to Today';
+      setControlText(element<HTMLButtonElement>('today-button'), 'Return to Today');
     }
     const play = element<HTMLButtonElement>('play-toggle');
     play.setAttribute('aria-pressed', String(state.isPlaying));
@@ -351,8 +357,7 @@ export class AppInterface {
         ? 'Simulation Complete'
         : state.isPlaying ? 'Pause simulation' : 'Play simulation';
     play.setAttribute('aria-label', playLabel);
-    const playIcon = play.firstElementChild;
-    if (playIcon) playIcon.textContent = state.isPlaying ? 'Ⅱ' : '▶';
+    setControlText(play.firstElementChild, state.isPlaying ? 'Ⅱ' : '▶');
     element<HTMLSelectElement>('quality-select').value = state.quality;
     element<HTMLInputElement>('reduced-motion').checked = state.reducedMotion;
 
@@ -451,9 +456,9 @@ export class AppInterface {
     const follow = element<HTMLButtonElement>('follow-planet');
     const isFollowing = state.followedPlanet !== null && state.followedPlanet === selectedBody(state);
     follow.setAttribute('aria-pressed', String(isFollowing));
-    follow.textContent = isFollowing && state.followedPlanet
+    setControlText(follow, isFollowing && state.followedPlanet
       ? `Stop Following ${getPlanetProfile(state.followedPlanet).name}`
-      : 'Follow Planet';
+      : 'Follow Planet');
     this.renderTour(state);
     element<HTMLButtonElement>('replay-journey').hidden = state.tour.status !== 'complete';
     const journeyComplete = isGalaxy ? state.galacticJourneyComplete : state.journeyComplete;
@@ -466,7 +471,7 @@ export class AppInterface {
     element<HTMLElement>('completion-copy').textContent = isGalaxy
       ? 'The schematic Sun marker has completed one approximate orbit of the Milky Way.'
       : 'Neptune has completed one orbit. The Solar System has traveled about 0.12 light-years along its local galactic path.';
-    element<HTMLButtonElement>('replay-button').textContent = isGalaxy ? 'Replay from Present' : 'Replay from Today';
+    setControlText(element<HTMLButtonElement>('replay-button'), isGalaxy ? 'Replay from Present' : 'Replay from Today');
   }
 
   openSimulation(): void {
@@ -561,6 +566,6 @@ export class AppInterface {
     element<HTMLElement>('tour-title').textContent = chapter.title;
     element<HTMLElement>('tour-copy').textContent = chapter.copy;
     element<HTMLElement>('tour-progress').style.width = `${((state.tour.chapter + 1) / TOUR_CHAPTERS.length) * 100}%`;
-    element<HTMLButtonElement>('tour-next').textContent = state.tour.chapter === TOUR_CHAPTERS.length - 1 ? 'Finish Journey' : 'Continue';
+    setControlText(element<HTMLButtonElement>('tour-next'), state.tour.chapter === TOUR_CHAPTERS.length - 1 ? 'Finish Journey' : 'Continue');
   }
 }
