@@ -24,7 +24,8 @@ export default defineConfig({
         headless: process.env.PLAYWRIGHT_FIREFOX_HEADED !== '1',
       },
     },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    // Desktop Safari defaults to 2x; matching the other engines' 1x cuts software-WebGL render cost in CI.
+    { name: 'webkit', use: { ...devices['Desktop Safari'], deviceScaleFactor: 1 } },
   ],
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4173',

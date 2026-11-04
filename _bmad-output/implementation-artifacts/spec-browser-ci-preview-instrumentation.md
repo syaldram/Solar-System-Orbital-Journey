@@ -2,7 +2,7 @@
 title: 'Run browser tests on the dev server only'
 type: 'bugfix'
 created: '2026-11-03'
-status: 'in-progress'
+status: 'done'
 baseline_commit: 'dbe5664c804a176bec2f6256a69f16781f2df631'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -61,3 +61,5 @@ context:
 - `npm run check` -- expected: pass.
 - `CI=1 npx playwright test tests/app.spec.ts -g "<instrumented cases>"` (all three projects) -- expected: pass.
 - Push to `fix/browser-ci-reliability`; the 10 deterministic `undefined`-hook failures are gone in all three matrix jobs.
+
+**Result:** CI run 41707722384 (f7db843a41d370673c2073e0adf57523456ccd5c): Chromium and Firefox passed; WebKit had 102 passed and no `undefined`-hook failures. Its 2 remaining failures were software-WebGL timeouts (`tests/app.spec.ts:1904`, `tests/integration-1-6.spec.ts:41` interior from space at balanced). `spec-browser-ci-webkit-dpr.md` addresses the WebKit cases; Chromium timeouts from run 41697888625 remain deferred.
