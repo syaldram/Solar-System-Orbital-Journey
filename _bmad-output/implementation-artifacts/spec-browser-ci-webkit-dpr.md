@@ -25,6 +25,7 @@ context:
 - No test asserts DPR-specific behavior. Vitest covers the pixel-ratio clamp (`src/rendering/orbital-scene.test.ts:271-294`).
 - Restored `spec-browser-ci-preview-instrumentation.md` from HEAD (its working copy had been emptied), marked it done, and recorded the CI result.
 - Verification: `npm run check` passed. Local `CI=1 npx playwright test --project=webkit` passed (104 passed, 4 skipped, 3.1m). macOS uses hardware GL, so the local run cannot reproduce the Linux software-WebGL stall; CI must confirm. The stall is intermittent, so a single green run is weak evidence.
+- CI outcome (run 41838314868): WebKit took 31.6m instead of 40.9m but still had 2 timeouts, and Chromium (already 1x) had 3. DPR was not the cause; `spec-browser-ci-heliosphere-timeouts.md` has the diagnosis (timeout budget overrun) and the fix.
 
 ## Review Triage Log
 

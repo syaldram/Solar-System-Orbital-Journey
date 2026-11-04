@@ -1440,7 +1440,7 @@ test('ends Planet follow when the guided journey changes chapter', async ({ page
 
 for (const [origin, bookmark] of [['sun', 'outer'], ['space', 'full'], ['space', 'path']] as const) {
   test(`explores Sun’s Gravity and restores ${origin}/${bookmark} context`, async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(Math.max(test.info().timeout, 120_000));
     await page.goto(`./?view=${origin}&body=earth&camera=${bookmark}`);
     const earth = page.getByRole('button', { name: 'Select Earth', exact: true });
     const saturn = page.getByRole('button', { name: 'Select Saturn', exact: true });

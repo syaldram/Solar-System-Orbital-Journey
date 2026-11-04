@@ -39,7 +39,6 @@ test('forced WebGL construction failure retains lesson, browser requirements and
 
 for (const sample of baseline.samples) for (const frame of ['sun', 'space']) for (const [qualityIndex, quality] of ['high', 'balanced', 'low'].entries()) {
   test(`frozen actual rounded physical cards: ${sample.label} from ${frame} at ${quality}`, async ({ page }) => {
-    test.setTimeout(90000);
     await page.clock.setFixedTime(new Date(baseline.anchorUtc));
     await page.goto(`./?view=${frame}&date=${encodeURIComponent(sample.instantUtc)}&body=earth`);
     await page.locator('#enter-heliosphere').click();
